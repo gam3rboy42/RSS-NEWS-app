@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -26,6 +27,8 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = RssRepository(application, db.rssDao())
 
     val selectedCategory = MutableStateFlow("ALL")
+    val selectedTimeRange = MutableStateFlow(com.example.data.model.TimeRangeFilter.ALL_TIME)
+    val randomOrderSeed = MutableStateFlow(System.currentTimeMillis())
     val hideDeals = MutableStateFlow(true) // Filter out deal articles by default!
     val onlyPreferredFeeds = MutableStateFlow(false)
     val onlyBookmarks = MutableStateFlow(false)
@@ -45,27 +48,49 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
             initialValue = emptyList()
         )
 
+    val availableCategories: StateFlow<List<String>> = repository.feeds.map { feeds ->
+        val userCategories = feeds.map { it.category.uppercase().trim() }.filter { it.isNotBlank() }
+        val defaultCats = DefaultFeedCatalog.categories
+        val combined = (listOf("ALL") + (defaultCats + userCategories).distinct().filter { it != "ALL" })
+        combined.sortedWith(Comparator { a, b ->
+            if (a == "ALL") -1
+            else if (b == "ALL") 1
+            else a.compareTo(b)
+        })
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = DefaultFeedCatalog.categories
+    )
+
     private val _selectedClusterForSources = MutableStateFlow<StoryCluster?>(null)
     val selectedClusterForSources: StateFlow<StoryCluster?> = _selectedClusterForSources.asStateFlow()
 
     private val _selectedArticleForReading = MutableStateFlow<ArticleEntity?>(null)
     val selectedArticleForReading: StateFlow<ArticleEntity?> = _selectedArticleForReading.asStateFlow()
 
-    // Active story stream dynamically combining filters & search
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val storyClusters: StateFlow<List<StoryCluster>> = combine(
+    private val filterState = combine(
         selectedCategory,
+        selectedTimeRange,
         hideDeals,
         onlyPreferredFeeds,
         onlyBookmarks
-    ) { category, deals, preferred, bookmarks ->
-        Tuple4(category, deals, preferred, bookmarks)
-    }.flatMapLatest { tuple ->
+    ) { category, timeRange, deals, preferred, bookmarks ->
+        FilterState(category, timeRange, deals, preferred, bookmarks)
+    }
+
+    // Active story stream dynamically combining filters & search
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val storyClusters: StateFlow<List<StoryCluster>> = combine(filterState, randomOrderSeed) { filters, seed ->
+        Pair(filters, seed)
+    }.flatMapLatest { (filters, seed) ->
         repository.getClusteredFeedStream(
-            categoryFilter = tuple.category,
-            hideDeals = tuple.hideDeals,
-            onlyPreferredFeeds = tuple.onlyPreferred,
-            onlyBookmarks = tuple.onlyBookmarks
+            categoryFilter = filters.category,
+            timeRangeFilter = filters.timeRange,
+            hideDeals = filters.deals,
+            onlyPreferredFeeds = filters.preferred,
+            onlyBookmarks = filters.bookmarks,
+            randomSeed = seed
         )
     }.combine(searchQuery) { clusters, query ->
         if (query.isBlank()) {
@@ -101,6 +126,14 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
             val result = repository.refreshFeeds()
             _syncState.value = result
         }
+    }
+
+    fun setTimeRange(timeRange: com.example.data.model.TimeRangeFilter) {
+        selectedTimeRange.value = timeRange
+    }
+
+    fun reorderSemiRandom() {
+        randomOrderSeed.value = System.currentTimeMillis()
     }
 
     fun setCategory(category: String) {
@@ -154,6 +187,28 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun updateFeedCategory(feedUrl: String, newCategory: String) {
+        viewModelScope.launch {
+            repository.updateFeedCategory(feedUrl, newCategory)
+        }
+    }
+
+    fun updateFeedDetails(
+        oldFeed: FeedEntity,
+        newTitle: String,
+        newUrl: String,
+        newCategory: String,
+        onResult: (Boolean) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            val success = repository.updateFeedDetails(oldFeed, newTitle, newUrl, newCategory)
+            if (success) {
+                refreshNews()
+            }
+            onResult(success)
+        }
+    }
+
     fun toggleFeedEnabled(feedUrl: String, currentEnabled: Boolean) {
         viewModelScope.launch {
             repository.toggleFeedEnabled(feedUrl, currentEnabled)
@@ -166,6 +221,7 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
             val success = repository.addCustomFeed(url, title, category)
             if (success) {
                 _syncState.value = SyncState.Success(1)
+                refreshNews()
             } else {
                 _syncState.value = SyncState.Error("Invalid or unreachable RSS Feed URL")
             }
@@ -184,4 +240,10 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
     }
 }
 
-private data class Tuple4<A, B, C, D>(val category: A, val hideDeals: B, val onlyPreferred: C, val onlyBookmarks: D)
+private data class FilterState(
+    val category: String,
+    val timeRange: com.example.data.model.TimeRangeFilter,
+    val deals: Boolean,
+    val preferred: Boolean,
+    val bookmarks: Boolean
+)

@@ -55,6 +55,8 @@ fun FeedStreamScreen(
 ) {
     val clusters by viewModel.storyClusters.collectAsState()
     val category by viewModel.selectedCategory.collectAsState()
+    val availableCategories by viewModel.availableCategories.collectAsState()
+    val timeRange by viewModel.selectedTimeRange.collectAsState()
     val hideDeals by viewModel.hideDeals.collectAsState()
     val onlyPreferred by viewModel.onlyPreferredFeeds.collectAsState()
     val onlyBookmarks by viewModel.onlyBookmarks.collectAsState()
@@ -81,11 +83,15 @@ fun FeedStreamScreen(
             onRefresh = { viewModel.refreshNews() }
         )
 
-        // Category Pills (if not in bookmarks mode)
+        // Category Pills & Time Filters (if not in bookmarks mode)
         if (!onlyBookmarks) {
             CategoryPillBar(
                 selectedCategory = category,
-                onSelectCategory = { viewModel.setCategory(it) }
+                onSelectCategory = { viewModel.setCategory(it) },
+                categories = availableCategories,
+                selectedTimeRange = timeRange,
+                onSelectTimeRange = { viewModel.setTimeRange(it) },
+                onShuffleOrder = { viewModel.reorderSemiRandom() }
             )
         }
 

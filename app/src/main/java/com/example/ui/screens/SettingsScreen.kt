@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FilterAlt
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
@@ -55,12 +56,26 @@ import com.example.ui.theme.NothingTextSecondary
 import com.example.ui.theme.NothingWhite
 import com.example.ui.viewmodel.RssViewModel
 
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import com.example.data.local.FeedEntity
+import com.example.ui.components.CategoryAssignDialog
+import com.example.util.InAppBrowser
+
 @Composable
 fun SettingsScreen(viewModel: RssViewModel) {
+    val context = LocalContext.current
     val allFeeds by viewModel.allFeeds.collectAsState()
+    val availableCategories by viewModel.availableCategories.collectAsState()
     val hideDeals by viewModel.hideDeals.collectAsState()
     val onlyPreferred by viewModel.onlyPreferredFeeds.collectAsState()
     val isOnline by viewModel.isOnline.collectAsState()
+
+    var editingFeedForFolder by remember { mutableStateOf<FeedEntity?>(null) }
 
     Column(
         modifier = Modifier
@@ -200,6 +215,27 @@ fun SettingsScreen(viewModel: RssViewModel) {
                                     color = if (feed.isEnabled) NothingWhite else NothingTextMuted
                                 )
 
+                                Spacer(modifier = Modifier.width(6.dp))
+
+                                // Folder/Category Chip Button
+                                Box(
+                                    modifier = Modifier
+                                        .testTag("feed_folder_chip_${feed.title}")
+                                        .clip(RoundedCornerShape(2.dp))
+                                        .background(NothingSurface)
+                                        .border(1.dp, NothingBorder, RoundedCornerShape(2.dp))
+                                        .clickable { editingFeedForFolder = feed }
+                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "📁 ${feed.category.uppercase()}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = NothingWhite,
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+
                                 if (feed.isPreferred) {
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Box(
@@ -231,8 +267,38 @@ fun SettingsScreen(viewModel: RssViewModel) {
 
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
+                            // Edit Feed Details
+                            IconButton(
+                                onClick = { editingFeedForFolder = feed },
+                                modifier = Modifier
+                                    .testTag("edit_feed_details_${feed.title}")
+                                    .size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Edit Feed Details",
+                                    tint = NothingRed,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+
+                            // Open in-app browser
+                            IconButton(
+                                onClick = { InAppBrowser.openUrl(context, feed.url) },
+                                modifier = Modifier
+                                    .testTag("feed_web_preview_${feed.title}")
+                                    .size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Language,
+                                    contentDescription = "Open Web",
+                                    tint = NothingWhite,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+
                             // Star preferred toggle
                             IconButton(
                                 onClick = { viewModel.toggleFeedPreferred(feed.url, feed.isPreferred) },
@@ -327,5 +393,18 @@ fun SettingsScreen(viewModel: RssViewModel) {
                 }
             }
         }
+    }
+
+    // Edit Feed Details Dialog
+    if (editingFeedForFolder != null) {
+        CategoryAssignDialog(
+            feed = editingFeedForFolder!!,
+            availableCategories = availableCategories,
+            onDismiss = { editingFeedForFolder = null },
+            onSaveFeed = { newTitle, newUrl, newCategory ->
+                viewModel.updateFeedDetails(editingFeedForFolder!!, newTitle, newUrl, newCategory)
+                editingFeedForFolder = null
+            }
+        )
     }
 }

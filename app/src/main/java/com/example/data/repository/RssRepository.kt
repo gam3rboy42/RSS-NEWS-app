@@ -46,10 +46,8 @@ class RssRepository(
 
     suspend fun initializeDefaultsIfNeeded() {
         withContext(Dispatchers.IO) {
-            val count = rssDao.getArticleCount()
-            // If feeds table is empty or first run, seed default feeds
             val defaultFeeds = DefaultFeedCatalog.toDefaultEntities()
-            rssDao.insertFeeds(defaultFeeds)
+            rssDao.insertDefaultFeeds(defaultFeeds)
         }
     }
 
@@ -116,24 +114,34 @@ class RssRepository(
 
     fun getClusteredFeedStream(
         categoryFilter: String,
+        timeRangeFilter: com.example.data.model.TimeRangeFilter,
         hideDeals: Boolean,
         onlyPreferredFeeds: Boolean,
-        onlyBookmarks: Boolean
+        onlyBookmarks: Boolean,
+        randomSeed: Long
     ): Flow<List<StoryCluster>> {
         val baseArticlesFlow = if (onlyBookmarks) bookmarkedArticles else rawArticles
 
         return combine(baseArticlesFlow, feeds) { articles, allFeeds ->
             val preferredUrlMap = allFeeds.associate { it.url to it.isPreferred }
+            val feedCategoryMap = allFeeds.associate { it.url to it.category }
+            val enabledUrlSet = allFeeds.filter { it.isEnabled }.map { it.url }.toSet()
 
-            // Filter & update preferred source flags
+            // Filter & update preferred source flags and categories
             val filteredArticles = articles.map { article ->
                 val isPref = preferredUrlMap[article.feedUrl] ?: article.isPreferredSource
+                val feedCat = feedCategoryMap[article.feedUrl] ?: article.category
+                var updated = article
                 if (article.isPreferredSource != isPref) {
-                    article.copy(isPreferredSource = isPref)
-                } else {
-                    article
+                    updated = updated.copy(isPreferredSource = isPref)
                 }
+                if (!feedCat.isNullOrBlank() && updated.category != feedCat) {
+                    updated = updated.copy(category = feedCat)
+                }
+                updated
             }.filter { article ->
+                // Must belong to an enabled feed
+                val isFeedEnabled = enabledUrlSet.contains(article.feedUrl)
                 // Category filter
                 val matchesCategory = categoryFilter == "ALL" || article.category.equals(categoryFilter, ignoreCase = true)
                 // Hide deals filter
@@ -141,11 +149,15 @@ class RssRepository(
                 // Preferred filter
                 val matchesPreferred = !onlyPreferredFeeds || article.isPreferredSource
 
-                matchesCategory && matchesDeals && matchesPreferred
+                isFeedEnabled && matchesCategory && matchesDeals && matchesPreferred
             }
 
-            // Cluster identical stories
-            StoryClusterer.clusterArticles(filteredArticles)
+            // Cluster identical stories with time range and semi-random ordering
+            StoryClusterer.clusterArticles(
+                articles = filteredArticles,
+                timeRangeFilter = timeRangeFilter,
+                randomSeed = randomSeed
+            )
         }.flowOn(Dispatchers.Default)
     }
 
@@ -167,6 +179,71 @@ class RssRepository(
         }
     }
 
+    suspend fun updateFeedCategory(feedUrl: String, newCategory: String) {
+        withContext(Dispatchers.IO) {
+            val formatted = newCategory.uppercase().trim().ifBlank { "UNCATEGORIZED" }
+            rssDao.updateFeedCategory(feedUrl, formatted)
+        }
+    }
+
+    suspend fun updateFeedDetails(
+        oldFeed: FeedEntity,
+        newTitle: String,
+        newUrl: String,
+        newCategory: String
+    ): Boolean = withContext(Dispatchers.IO) {
+        val cleanUrl = newUrl.trim()
+        val formattedUrl = if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) {
+            "https://$cleanUrl"
+        } else {
+            cleanUrl
+        }
+        val formattedCategory = newCategory.uppercase().trim().ifBlank { "UNCATEGORIZED" }
+        val formattedTitle = newTitle.trim().ifBlank { oldFeed.title }
+
+        if (oldFeed.url == formattedUrl) {
+            rssDao.updateFeedDetails(oldFeed.url, formattedTitle, formattedCategory)
+            true
+        } else {
+            // URL changed: remove old feed, insert new feed entity, migrate articles
+            rssDao.deleteFeedByUrl(oldFeed.url)
+            val updatedFeed = oldFeed.copy(
+                url = formattedUrl,
+                title = formattedTitle,
+                category = formattedCategory,
+                lastUpdated = System.currentTimeMillis()
+            )
+            rssDao.insertFeed(updatedFeed)
+            rssDao.updateArticlesFeedUrl(oldFeed.url, formattedUrl)
+
+            // Try fetching from new URL
+            try {
+                val request = Request.Builder()
+                    .url(formattedUrl)
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .build()
+
+                val response = okHttpClient.newCall(request).execute()
+                if (response.isSuccessful && response.body != null) {
+                    val parsed = RssXmlParser.parse(
+                        inputStream = response.body!!.byteStream(),
+                        feedUrl = formattedUrl,
+                        defaultCategory = formattedCategory,
+                        defaultFeedTitle = formattedTitle,
+                        isPreferredSource = oldFeed.isPreferred
+                    )
+                    if (parsed.articles.isNotEmpty()) {
+                        val processed = DealDetector.processArticles(parsed.articles)
+                        rssDao.insertArticles(processed)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("RssRepository", "Error fetching updated feed URL $formattedUrl: ${e.localizedMessage}")
+            }
+            true
+        }
+    }
+
     suspend fun toggleFeedEnabled(feedUrl: String, currentEnabled: Boolean) {
         withContext(Dispatchers.IO) {
             rssDao.updateFeedEnabled(feedUrl, !currentEnabled)
@@ -174,45 +251,63 @@ class RssRepository(
     }
 
     suspend fun addCustomFeed(url: String, title: String, category: String): Boolean = withContext(Dispatchers.IO) {
+        val cleanUrl = url.trim()
+        val formattedUrl = if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) {
+            "https://$cleanUrl"
+        } else {
+            cleanUrl
+        }
+
+        val formattedCategory = category.uppercase().trim().ifBlank { "CUSTOM" }
+        var feedTitle = title.ifBlank { "Custom Feed" }
+        var feedDescription = "Custom RSS Feed"
+        var parsedArticles = emptyList<ArticleEntity>()
+
         try {
             val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", "Mozilla/5.0 (Android; Nothing RSS News Reader)")
+                .url(formattedUrl)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                 .build()
 
             val response = okHttpClient.newCall(request).execute()
             if (response.isSuccessful && response.body != null) {
                 val parsed = RssXmlParser.parse(
                     inputStream = response.body!!.byteStream(),
-                    feedUrl = url,
-                    defaultCategory = category,
-                    defaultFeedTitle = title,
+                    feedUrl = formattedUrl,
+                    defaultCategory = formattedCategory,
+                    defaultFeedTitle = feedTitle,
                     isPreferredSource = true
                 )
-
-                val newFeed = FeedEntity(
-                    url = url,
-                    title = parsed.title.ifBlank { title },
-                    category = category,
-                    description = parsed.description.ifBlank { "Custom RSS Feed" },
-                    isPreferred = true,
-                    isEnabled = true,
-                    isCustom = true
-                )
-
-                rssDao.insertFeed(newFeed)
-
-                if (parsed.articles.isNotEmpty()) {
-                    val processed = DealDetector.processArticles(parsed.articles)
-                    rssDao.insertArticles(processed)
+                if (parsed.title.isNotBlank() && parsed.title != "Feed") {
+                    feedTitle = parsed.title
                 }
-
-                true
-            } else false
+                if (parsed.description.isNotBlank()) {
+                    feedDescription = parsed.description
+                }
+                parsedArticles = parsed.articles
+            }
         } catch (e: Exception) {
-            Log.e("RssRepository", "Failed adding custom feed: ${e.localizedMessage}")
-            false
+            Log.e("RssRepository", "Network or XML parse warning when adding feed $formattedUrl: ${e.localizedMessage}")
         }
+
+        val newFeed = FeedEntity(
+            url = formattedUrl,
+            title = feedTitle,
+            category = formattedCategory,
+            description = feedDescription,
+            isPreferred = true,
+            isEnabled = true,
+            isCustom = true
+        )
+
+        rssDao.insertFeed(newFeed)
+
+        if (parsedArticles.isNotEmpty()) {
+            val processed = DealDetector.processArticles(parsedArticles)
+            rssDao.insertArticles(processed)
+        }
+
+        true
     }
 
     suspend fun deleteFeed(feedUrl: String) {

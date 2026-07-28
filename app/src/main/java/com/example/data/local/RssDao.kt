@@ -16,6 +16,9 @@ interface RssDao {
     @Query("SELECT * FROM feeds WHERE isEnabled = 1")
     suspend fun getEnabledFeeds(): List<FeedEntity>
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertDefaultFeeds(feeds: List<FeedEntity>)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertFeeds(feeds: List<FeedEntity>)
 
@@ -27,6 +30,15 @@ interface RssDao {
 
     @Query("UPDATE feeds SET isEnabled = :isEnabled WHERE url = :url")
     suspend fun updateFeedEnabled(url: String, isEnabled: Boolean)
+
+    @Query("UPDATE feeds SET category = :category WHERE url = :url")
+    suspend fun updateFeedCategory(url: String, category: String)
+
+    @Query("UPDATE feeds SET title = :title, category = :category WHERE url = :url")
+    suspend fun updateFeedDetails(url: String, title: String, category: String)
+
+    @Query("UPDATE articles SET feedUrl = :newUrl WHERE feedUrl = :oldUrl")
+    suspend fun updateArticlesFeedUrl(oldUrl: String, newUrl: String)
 
     @Query("DELETE FROM feeds WHERE url = :url")
     suspend fun deleteFeedByUrl(url: String)

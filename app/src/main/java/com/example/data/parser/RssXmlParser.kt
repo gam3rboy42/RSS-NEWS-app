@@ -22,13 +22,20 @@ object RssXmlParser {
             val parser: XmlPullParser = Xml.newPullParser()
             parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
             parser.setInput(stream, null)
-            parser.nextTag()
-            
-            return when (parser.name?.lowercase(Locale.ROOT)) {
-                "rss" -> parseRss2(parser, feedUrl, defaultCategory, defaultFeedTitle, isPreferredSource)
-                "feed" -> parseAtom(parser, feedUrl, defaultCategory, defaultFeedTitle, isPreferredSource)
-                else -> parseRss2(parser, feedUrl, defaultCategory, defaultFeedTitle, isPreferredSource)
+
+            var eventType = parser.eventType
+            while (eventType != XmlPullParser.END_DOCUMENT) {
+                if (eventType == XmlPullParser.START_TAG) {
+                    val tagName = parser.name?.lowercase(Locale.ROOT)
+                    if (tagName == "rss" || tagName == "channel") {
+                        return parseRss2(parser, feedUrl, defaultCategory, defaultFeedTitle, isPreferredSource)
+                    } else if (tagName == "feed") {
+                        return parseAtom(parser, feedUrl, defaultCategory, defaultFeedTitle, isPreferredSource)
+                    }
+                }
+                eventType = parser.next()
             }
+            return ParsedFeed(defaultFeedTitle, "", emptyList())
         }
     }
 
@@ -43,23 +50,26 @@ object RssXmlParser {
         var feedDescription = ""
         val articles = mutableListOf<ArticleEntity>()
 
-        while (parser.next() != XmlPullParser.END_DOCUMENT) {
-            if (parser.eventType != XmlPullParser.START_TAG) continue
-
-            when (parser.name?.lowercase(Locale.ROOT)) {
-                "title" -> if (feedTitle.isEmpty() || feedTitle == "Feed") {
-                    feedTitle = readText(parser)
-                }
-                "description" -> if (feedDescription.isEmpty()) {
-                    feedDescription = stripHtml(readText(parser))
-                }
-                "item" -> {
-                    val article = readRssItem(parser, feedUrl, defaultCategory, feedTitle.ifEmpty { defaultFeedTitle }, isPreferredSource)
-                    if (article != null) {
-                        articles.add(article)
+        var eventType = parser.eventType
+        while (eventType != XmlPullParser.END_DOCUMENT) {
+            if (eventType == XmlPullParser.START_TAG) {
+                when (parser.name?.lowercase(Locale.ROOT)) {
+                    "title" -> if (feedTitle.isEmpty() || feedTitle == "Feed" || feedTitle == defaultFeedTitle) {
+                        val parsedTitle = readText(parser)
+                        if (parsedTitle.isNotBlank()) feedTitle = parsedTitle
+                    }
+                    "description" -> if (feedDescription.isEmpty()) {
+                        feedDescription = stripHtml(readText(parser))
+                    }
+                    "item" -> {
+                        val article = readRssItem(parser, feedUrl, defaultCategory, feedTitle.ifEmpty { defaultFeedTitle }, isPreferredSource)
+                        if (article != null) {
+                            articles.add(article)
+                        }
                     }
                 }
             }
+            eventType = parser.next()
         }
 
         return ParsedFeed(
@@ -76,8 +86,6 @@ object RssXmlParser {
         feedTitle: String,
         isPreferredSource: Boolean
     ): ArticleEntity? {
-        parser.require(XmlPullParser.START_TAG, null, "item")
-
         var title = ""
         var link = ""
         var description = ""
@@ -86,45 +94,46 @@ object RssXmlParser {
         var imageUrl: String? = null
         var guid = ""
 
-        while (parser.next() != XmlPullParser.END_TAG || parser.name?.lowercase(Locale.ROOT) != "item") {
-            if (parser.eventType != XmlPullParser.START_TAG) continue
-
-            val tagName = parser.name?.lowercase(Locale.ROOT) ?: ""
-            when (tagName) {
-                "title" -> title = readText(parser)
-                "link" -> link = readText(parser)
-                "guid" -> guid = readText(parser)
-                "description" -> {
-                    val rawDesc = readText(parser)
-                    description = stripHtml(rawDesc)
-                    if (imageUrl == null) {
-                        imageUrl = extractImageFromHtml(rawDesc)
+        var eventType = parser.next()
+        while (!(eventType == XmlPullParser.END_TAG && parser.name?.lowercase(Locale.ROOT) == "item")) {
+            if (eventType == XmlPullParser.START_TAG) {
+                val tagName = parser.name?.lowercase(Locale.ROOT) ?: ""
+                when (tagName) {
+                    "title" -> title = readText(parser)
+                    "link" -> link = readText(parser)
+                    "guid" -> guid = readText(parser)
+                    "description" -> {
+                        val rawDesc = readText(parser)
+                        description = stripHtml(rawDesc)
+                        if (imageUrl == null) {
+                            imageUrl = extractImageFromHtml(rawDesc)
+                        }
+                    }
+                    "content:encoded", "content" -> {
+                        val rawContent = readText(parser)
+                        content = stripHtml(rawContent)
+                        if (imageUrl == null) {
+                            imageUrl = extractImageFromHtml(rawContent)
+                        }
+                    }
+                    "pubdate", "dc:date", "published", "updated" -> pubDateStr = readText(parser)
+                    "enclosure" -> {
+                        val type = parser.getAttributeValue(null, "type")
+                        if (type != null && type.startsWith("image")) {
+                            val url = parser.getAttributeValue(null, "url")
+                            if (!url.isNullOrBlank()) imageUrl = url
+                        }
+                    }
+                    "media:content", "media:thumbnail" -> {
+                        val url = parser.getAttributeValue(null, "url")
+                        if (!url.isNullOrBlank()) {
+                            imageUrl = url
+                        }
                     }
                 }
-                "content:encoded" -> {
-                    val rawContent = readText(parser)
-                    content = stripHtml(rawContent)
-                    if (imageUrl == null) {
-                        imageUrl = extractImageFromHtml(rawContent)
-                    }
-                }
-                "pubdate" -> pubDateStr = readText(parser)
-                "enclosure" -> {
-                    val type = parser.getAttributeValue(null, "type")
-                    if (type != null && type.startsWith("image")) {
-                        imageUrl = parser.getAttributeValue(null, "url")
-                    }
-                    skip(parser)
-                }
-                "media:content", "media:thumbnail" -> {
-                    val url = parser.getAttributeValue(null, "url")
-                    if (!url.isNull_or_empty()) {
-                        imageUrl = url
-                    }
-                    skip(parser)
-                }
-                else -> skip(parser)
             }
+            if (eventType == XmlPullParser.END_DOCUMENT) break
+            eventType = parser.next()
         }
 
         if (title.isBlank() && link.isBlank()) return null
@@ -148,7 +157,7 @@ object RssXmlParser {
             imageUrl = imageUrl,
             isBookmarked = false,
             isRead = false,
-            isDeal = false, // Will be calculated by DealDetector algorithm
+            isDeal = false,
             isPreferredSource = isPreferredSource,
             storyClusterHash = ""
         )
@@ -164,20 +173,23 @@ object RssXmlParser {
         var feedTitle = defaultFeedTitle
         val articles = mutableListOf<ArticleEntity>()
 
-        while (parser.next() != XmlPullParser.END_DOCUMENT) {
-            if (parser.eventType != XmlPullParser.START_TAG) continue
-
-            when (parser.name?.lowercase(Locale.ROOT)) {
-                "title" -> if (feedTitle.isEmpty() || feedTitle == "Feed") {
-                    feedTitle = readText(parser)
-                }
-                "entry" -> {
-                    val article = readAtomEntry(parser, feedUrl, defaultCategory, feedTitle.ifEmpty { defaultFeedTitle }, isPreferredSource)
-                    if (article != null) {
-                        articles.add(article)
+        var eventType = parser.eventType
+        while (eventType != XmlPullParser.END_DOCUMENT) {
+            if (eventType == XmlPullParser.START_TAG) {
+                when (parser.name?.lowercase(Locale.ROOT)) {
+                    "title" -> if (feedTitle.isEmpty() || feedTitle == "Feed" || feedTitle == defaultFeedTitle) {
+                        val parsedTitle = readText(parser)
+                        if (parsedTitle.isNotBlank()) feedTitle = parsedTitle
+                    }
+                    "entry" -> {
+                        val article = readAtomEntry(parser, feedUrl, defaultCategory, feedTitle.ifEmpty { defaultFeedTitle }, isPreferredSource)
+                        if (article != null) {
+                            articles.add(article)
+                        }
                     }
                 }
             }
+            eventType = parser.next()
         }
 
         return ParsedFeed(
@@ -194,8 +206,6 @@ object RssXmlParser {
         feedTitle: String,
         isPreferredSource: Boolean
     ): ArticleEntity? {
-        parser.require(XmlPullParser.START_TAG, null, "entry")
-
         var title = ""
         var link = ""
         var summary = ""
@@ -204,33 +214,35 @@ object RssXmlParser {
         var id = ""
         var imageUrl: String? = null
 
-        while (parser.next() != XmlPullParser.END_TAG || parser.name?.lowercase(Locale.ROOT) != "entry") {
-            if (parser.eventType != XmlPullParser.START_TAG) continue
-
-            when (parser.name?.lowercase(Locale.ROOT)) {
-                "title" -> title = readText(parser)
-                "id" -> id = readText(parser)
-                "link" -> {
-                    val rel = parser.getAttributeValue(null, "rel")
-                    val href = parser.getAttributeValue(null, "href")
-                    if (rel == null || rel == "alternate") {
-                        if (!href.isNull_or_empty()) link = href
+        var eventType = parser.next()
+        while (!(eventType == XmlPullParser.END_TAG && parser.name?.lowercase(Locale.ROOT) == "entry")) {
+            if (eventType == XmlPullParser.START_TAG) {
+                val tagName = parser.name?.lowercase(Locale.ROOT) ?: ""
+                when (tagName) {
+                    "title" -> title = readText(parser)
+                    "id" -> id = readText(parser)
+                    "link" -> {
+                        val rel = parser.getAttributeValue(null, "rel")
+                        val href = parser.getAttributeValue(null, "href")
+                        if (rel == null || rel == "alternate") {
+                            if (!href.isNullOrBlank()) link = href
+                        }
                     }
-                    skip(parser)
+                    "summary" -> {
+                        val raw = readText(parser)
+                        summary = stripHtml(raw)
+                        if (imageUrl == null) imageUrl = extractImageFromHtml(raw)
+                    }
+                    "content" -> {
+                        val raw = readText(parser)
+                        content = stripHtml(raw)
+                        if (imageUrl == null) imageUrl = extractImageFromHtml(raw)
+                    }
+                    "updated", "published" -> updated = readText(parser)
                 }
-                "summary" -> {
-                    val raw = readText(parser)
-                    summary = stripHtml(raw)
-                    if (imageUrl == null) imageUrl = extractImageFromHtml(raw)
-                }
-                "content" -> {
-                    val raw = readText(parser)
-                    content = stripHtml(raw)
-                    if (imageUrl == null) imageUrl = extractImageFromHtml(raw)
-                }
-                "updated", "published" -> updated = readText(parser)
-                else -> skip(parser)
             }
+            if (eventType == XmlPullParser.END_DOCUMENT) break
+            eventType = parser.next()
         }
 
         if (title.isBlank()) return null
@@ -259,25 +271,13 @@ object RssXmlParser {
     }
 
     private fun readText(parser: XmlPullParser): String {
-        var result = ""
-        if (parser.next() == XmlPullParser.TEXT) {
-            result = parser.text
-            parser.nextTag()
+        val sb = StringBuilder()
+        var eventType = parser.next()
+        while (eventType == XmlPullParser.TEXT || eventType == XmlPullParser.CDSECT) {
+            sb.append(parser.text)
+            eventType = parser.next()
         }
-        return result
-    }
-
-    private fun skip(parser: XmlPullParser) {
-        if (parser.eventType != XmlPullParser.START_TAG) {
-            return
-        }
-        var depth = 1
-        while (depth != 0) {
-            when (parser.next()) {
-                XmlPullParser.END_TAG -> depth--
-                XmlPullParser.START_TAG -> depth++
-            }
-        }
+        return sb.toString().trim()
     }
 
     private fun stripHtml(html: String): String {
@@ -339,6 +339,4 @@ object RssXmlParser {
             }
         }
     }
-
-    private fun String.isNull_or_empty() = this.isEmpty()
 }

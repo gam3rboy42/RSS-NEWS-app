@@ -57,6 +57,7 @@ import com.example.ui.theme.NothingTextMuted
 import com.example.ui.theme.NothingTextSecondary
 import com.example.ui.theme.NothingWhite
 import com.example.ui.viewmodel.RssViewModel
+import com.example.util.InAppBrowser
 
 @Composable
 fun ArticleDetailScreen(
@@ -188,10 +189,7 @@ fun ArticleDetailScreen(
                 // Open in browser
                 IconButton(
                     onClick = {
-                        try {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(article.link))
-                            context.startActivity(intent)
-                        } catch (_: Exception) {}
+                        InAppBrowser.openUrl(context, article.link)
                     },
                     modifier = Modifier
                         .testTag("open_browser_button")
@@ -334,10 +332,7 @@ fun ArticleDetailScreen(
             // External Source Button
             Button(
                 onClick = {
-                    try {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(article.link))
-                        context.startActivity(intent)
-                    } catch (_: Exception) {}
+                    InAppBrowser.openUrl(context, article.link)
                 },
                 modifier = Modifier
                     .testTag("open_original_source_button")

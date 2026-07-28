@@ -2,6 +2,13 @@ package com.example.data.model
 
 import com.example.data.local.ArticleEntity
 import java.util.Locale
+import kotlin.random.Random
+
+enum class TimeRangeFilter(val label: String) {
+    SAME_DAY("SAME DAY"),
+    ONE_WEEK("1 WEEK"),
+    ALL_TIME("ALL TIME")
+}
 
 data class StoryCluster(
     val clusterId: String,
@@ -30,22 +37,40 @@ object StoryClusterer {
         "new", "says", "report", "first", "after", "over", "about", "more"
     )
 
-    fun clusterArticles(articles: List<ArticleEntity>): List<StoryCluster> {
+    fun clusterArticles(
+        articles: List<ArticleEntity>,
+        timeRangeFilter: TimeRangeFilter = TimeRangeFilter.ALL_TIME,
+        randomSeed: Long = 0L
+    ): List<StoryCluster> {
         if (articles.isEmpty()) return emptyList()
+
+        val currentTime = System.currentTimeMillis()
+        val dayInMillis = 24 * 60 * 60 * 1000L
+        val weekInMillis = 7 * dayInMillis
+
+        // 1. Time range filter
+        val timeFilteredArticles = articles.filter { article ->
+            when (timeRangeFilter) {
+                TimeRangeFilter.SAME_DAY -> (currentTime - article.pubDateTimestamp) <= dayInMillis
+                TimeRangeFilter.ONE_WEEK -> (currentTime - article.pubDateTimestamp) <= weekInMillis
+                TimeRangeFilter.ALL_TIME -> true
+            }
+        }
+
+        if (timeFilteredArticles.isEmpty()) return emptyList()
 
         val clusters = mutableListOf<MutableList<ArticleEntity>>()
 
-        for (article in articles) {
+        for (article in timeFilteredArticles) {
             val articleWords = extractSignificantWords(article.title)
             var matchedCluster: MutableList<ArticleEntity>? = null
 
             for (cluster in clusters) {
-                // Check against existing articles in cluster
                 val representative = cluster.first()
                 val repWords = extractSignificantWords(representative.title)
                 
                 val similarity = calculateJaccardSimilarity(articleWords, repWords)
-                if (similarity >= 0.42) { // 42%+ word overlap in significant title keywords = same story
+                if (similarity >= 0.42) {
                     matchedCluster = cluster
                     break
                 }
@@ -58,8 +83,7 @@ object StoryClusterer {
             }
         }
 
-        return clusters.mapIndexed { index, clusterArticles ->
-            // Sort cluster articles: preferred feed first, then newest timestamp
+        val unSortedClusters = clusters.mapIndexed { index, clusterArticles ->
             val sortedArticles = clusterArticles.sortedWith(
                 compareByDescending<ArticleEntity> { it.isPreferredSource }
                     .thenByDescending { it.pubDateTimestamp }
@@ -79,7 +103,21 @@ object StoryClusterer {
                 latestTimestamp = maxTimestamp,
                 articles = sortedArticles
             )
-        }.sortedByDescending { it.latestTimestamp }
+        }
+
+        // 2. Semi-random ordering that prioritizes preferred sources
+        return unSortedClusters.sortedByDescending { cluster ->
+            val hasPreferred = cluster.preferredSourceCount > 0 || cluster.articles.any { it.isPreferredSource }
+            val preferredBoost = if (hasPreferred) 10000.0 else 0.0
+            val recencyScore = (cluster.latestTimestamp.toDouble() / (1000 * 60 * 60 * 24))
+            
+            // Deterministic pseudo-random variation based on seed and cluster identifier
+            val clusterHash = cluster.clusterId.hashCode().toLong()
+            val rng = Random(randomSeed xor clusterHash)
+            val randomJitter = rng.nextDouble() * 50.0
+
+            preferredBoost + recencyScore + randomJitter
+        }
     }
 
     private fun extractSignificantWords(title: String): Set<String> {
