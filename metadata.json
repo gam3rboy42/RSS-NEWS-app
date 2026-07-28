@@ -1,0 +1,6 @@
+{
+  "name": "Nothing RSS",
+  "description": "A minimalist Nothing OS styled RSS news feed with story stacking, deal filtering, preferred feeds, feed discovery, and offline reading.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
