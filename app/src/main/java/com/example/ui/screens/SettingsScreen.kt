@@ -1,5 +1,25 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import android.content.Intent
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -66,6 +86,7 @@ import com.example.data.local.FeedEntity
 import com.example.ui.components.CategoryAssignDialog
 import com.example.util.InAppBrowser
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(viewModel: RssViewModel) {
     val context = LocalContext.current
@@ -74,8 +95,84 @@ fun SettingsScreen(viewModel: RssViewModel) {
     val hideDeals by viewModel.hideDeals.collectAsState()
     val onlyPreferred by viewModel.onlyPreferredFeeds.collectAsState()
     val isOnline by viewModel.isOnline.collectAsState()
+    val refreshInterval by viewModel.backgroundRefreshIntervalMinutes.collectAsState()
+    val mutedKeywords by viewModel.mutedKeywords.collectAsState()
+    val mutedAuthors by viewModel.mutedAuthors.collectAsState()
+    val mutedSubcategories by viewModel.mutedSubcategories.collectAsState()
 
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            viewModel.sendTestNotification()
+        }
+    }
+
+    val scope = rememberCoroutineScope()
     var editingFeedForFolder by remember { mutableStateOf<FeedEntity?>(null) }
+    var showExportDialog by remember { mutableStateOf(false) }
+    var exportedOpmlText by remember { mutableStateOf("") }
+    var showImportDialog by remember { mutableStateOf(false) }
+    var importInputText by remember { mutableStateOf("") }
+
+    var jsonExportStringForSave by remember { mutableStateOf("") }
+    var showJsonPreviewDialog by remember { mutableStateOf(false) }
+    var exportedJsonText by remember { mutableStateOf("") }
+
+    val createJsonFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.openOutputStream(uri)?.use { outputStream ->
+                    outputStream.write(jsonExportStringForSave.toByteArray(Charsets.UTF_8))
+                }
+                Toast.makeText(context, "Saved JSON feed & tag backup to device!", Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                Toast.makeText(context, "Failed to save file: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    val openJsonPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                    val content = inputStream.bufferedReader().readText()
+                    scope.launch {
+                        val res = viewModel.importFeedsFromJson(content)
+                        Toast.makeText(
+                            context,
+                            "Imported ${res.importedFeedsCount} feed(s) and tag rules from JSON backup!",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Error importing JSON file: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    val opmlPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                    val content = inputStream.bufferedReader().readText()
+                    scope.launch {
+                        val count = viewModel.importOpmlXml(content)
+                        Toast.makeText(context, "Successfully imported $count feed(s) from OPML!", Toast.LENGTH_LONG).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Error reading OPML file: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -159,6 +256,312 @@ fun SettingsScreen(viewModel: RssViewModel) {
                                 ),
                                 modifier = Modifier.testTag("deal_filter_switch")
                             )
+                        }
+                    }
+                }
+            }
+
+            // BACKGROUND REFRESH & PERIODIC ARTICLE NOTIFICATIONS
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(NothingDarkGray)
+                        .border(1.dp, NothingBorder, RoundedCornerShape(6.dp))
+                        .padding(16.dp)
+                ) {
+                    Column {
+                        Text(
+                            text = "BACKGROUND REFRESH & NOTIFICATIONS",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = NothingWhite
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Periodically syncs RSS feeds in the background and sends article suggestions with title, source, author, and article picture.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = NothingTextMuted
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Text(
+                            text = "SYNC FREQUENCY",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 10.sp,
+                            color = NothingTextSecondary
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        val options = listOf(
+                            15L to "15 MIN",
+                            60L to "1 HOUR",
+                            180L to "3 HOURS",
+                            360L to "6 HOURS",
+                            0L to "OFF"
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            options.forEach { (minutes, label) ->
+                                val isSelected = refreshInterval == minutes
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(if (isSelected) NothingRed else NothingSurface)
+                                        .border(1.dp, if (isSelected) NothingRed else NothingBorder, RoundedCornerShape(4.dp))
+                                        .clickable { viewModel.setBackgroundRefreshInterval(minutes) }
+                                        .padding(vertical = 8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = label,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelected) NothingWhite else NothingTextMuted
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Test Notification Button
+                        Button(
+                            onClick = {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                } else {
+                                    viewModel.sendTestNotification()
+                                }
+                            },
+                            shape = RoundedCornerShape(4.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = NothingSurface,
+                                contentColor = NothingWhite
+                            ),
+                            modifier = Modifier
+                                .testTag("send_test_notification_button")
+                                .fillMaxWidth()
+                                .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Notifications,
+                                    contentDescription = "Test Notification",
+                                    tint = NothingRed,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "SEND TEST ARTICLE NOTIFICATION",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // MUTED / DISLIKED TOPICS & AUTHORS SECTION
+            item {
+                Spacer(modifier = Modifier.height(12.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(NothingDarkGray)
+                        .border(1.dp, NothingRed.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
+                        .padding(14.dp)
+                ) {
+                    Column {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.VolumeOff,
+                                    contentDescription = "Muted",
+                                    tint = NothingRed,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "MUTED TOPICS & AUTHORS",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = NothingWhite
+                                )
+                            }
+                            val totalMuted = mutedKeywords.size + mutedAuthors.size + mutedSubcategories.size
+                            Text(
+                                text = "($totalMuted MUTED)",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                color = NothingTextMuted
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "When you dislike articles, topics, subcategories, and authors are automatically extracted and filtered out on-device.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = NothingTextMuted
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        if (mutedKeywords.isEmpty() && mutedAuthors.isEmpty() && mutedSubcategories.isEmpty()) {
+                            Text(
+                                text = "No muted topics yet. Tap the dislike button on any article to auto-mute.",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                color = NothingTextSecondary,
+                                modifier = Modifier.padding(vertical = 4.dp)
+                            )
+                        } else {
+                            if (mutedKeywords.isNotEmpty()) {
+                                Text(
+                                    text = "MUTED KEYWORDS:",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 9.sp,
+                                    color = NothingTextMuted,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    mutedKeywords.forEach { kw ->
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(3.dp))
+                                                .background(NothingSurface)
+                                                .border(1.dp, NothingRed.copy(alpha = 0.5f), RoundedCornerShape(3.dp))
+                                                .clickable { viewModel.unmuteKeyword(kw) }
+                                                .padding(horizontal = 6.dp, vertical = 3.dp)
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(
+                                                    text = "#$kw",
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = NothingRed
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Icon(
+                                                    imageVector = Icons.Default.Close,
+                                                    contentDescription = "Unmute",
+                                                    tint = NothingRed,
+                                                    modifier = Modifier.size(10.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
+
+                            if (mutedAuthors.isNotEmpty()) {
+                                Text(
+                                    text = "MUTED AUTHORS:",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 9.sp,
+                                    color = NothingTextMuted,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    mutedAuthors.forEach { author ->
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(3.dp))
+                                                .background(NothingSurface)
+                                                .border(1.dp, NothingBorder, RoundedCornerShape(3.dp))
+                                                .clickable { viewModel.unmuteAuthor(author) }
+                                                .padding(horizontal = 6.dp, vertical = 3.dp)
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(
+                                                    text = author,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontSize = 10.sp,
+                                                    color = NothingWhite
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Icon(
+                                                    imageVector = Icons.Default.Close,
+                                                    contentDescription = "Unmute",
+                                                    tint = NothingTextMuted,
+                                                    modifier = Modifier.size(10.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
+
+                            if (mutedSubcategories.isNotEmpty()) {
+                                Text(
+                                    text = "MUTED SUBCATEGORIES:",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 9.sp,
+                                    color = NothingTextMuted,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    mutedSubcategories.forEach { subcat ->
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(3.dp))
+                                                .background(NothingSurface)
+                                                .border(1.dp, NothingBorder, RoundedCornerShape(3.dp))
+                                                .clickable { viewModel.unmuteSubcategory(subcat) }
+                                                .padding(horizontal = 6.dp, vertical = 3.dp)
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(
+                                                    text = subcat,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontSize = 10.sp,
+                                                    color = NothingWhite
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Icon(
+                                                    imageVector = Icons.Default.Close,
+                                                    contentDescription = "Unmute",
+                                                    tint = NothingTextMuted,
+                                                    modifier = Modifier.size(10.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -333,9 +736,205 @@ fun SettingsScreen(viewModel: RssViewModel) {
                 }
             }
 
-            // OFFLINE CACHE SECTION
+            // PRIVACY & ON-DEVICE GUARANTEE SECTION
             item {
                 Spacer(modifier = Modifier.height(20.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(NothingDarkGray)
+                        .border(1.dp, NothingRed.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                        .padding(16.dp)
+                ) {
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Security,
+                                contentDescription = "Privacy",
+                                tint = NothingRed,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "100% ON-DEVICE PRIVACY GUARANTEE",
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                color = NothingWhite
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "All story clustering, dislike analysis, category auto-tagging, deal filtering, and reading history run locally on your device in a local Room database. Your data never leaves your device unless you choose to export it to transfer to a new phone.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = NothingTextMuted
+                        )
+                    }
+                }
+            }
+
+            // EXPORT / IMPORT & NEW PHONE MIGRATION
+            item {
+                Spacer(modifier = Modifier.height(16.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(NothingDarkGray)
+                        .border(1.dp, NothingBorder, RoundedCornerShape(6.dp))
+                        .padding(16.dp)
+                ) {
+                    Column {
+                        Text(
+                            text = "OFFLINE DEVICE MIGRATION & BACKUP",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = NothingWhite
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Export your feed list, tags, categories, and custom auto-tagger rules directly into a JSON or OPML file. Save locally to your device storage to keep all data 100% private and off-cloud.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = NothingTextMuted
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Primary JSON Export / Import Row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = {
+                                    scope.launch {
+                                        val jsonString = viewModel.exportFeedsToJson()
+                                        jsonExportStringForSave = jsonString
+                                        createJsonFileLauncher.launch("nothing_rss_feeds_backup.json")
+                                    }
+                                },
+                                shape = RoundedCornerShape(4.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = NothingRed,
+                                    contentColor = NothingWhite
+                                ),
+                                modifier = Modifier
+                                    .testTag("export_json_button")
+                                    .weight(1f)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.FileUpload,
+                                        contentDescription = "Save JSON",
+                                        tint = NothingWhite,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "SAVE JSON TO DEVICE",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            }
+
+                            Button(
+                                onClick = {
+                                    openJsonPickerLauncher.launch("*/*")
+                                },
+                                shape = RoundedCornerShape(4.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = NothingSurface,
+                                    contentColor = NothingWhite
+                                ),
+                                modifier = Modifier
+                                    .testTag("import_json_button")
+                                    .weight(1f)
+                                    .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.FileDownload,
+                                        contentDescription = "Import JSON",
+                                        tint = NothingRed,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "IMPORT JSON FILE",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Secondary Row: Preview/Share JSON & OPML Options
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = {
+                                    scope.launch {
+                                        exportedJsonText = viewModel.exportFeedsToJson()
+                                        showJsonPreviewDialog = true
+                                    }
+                                },
+                                shape = RoundedCornerShape(4.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = NothingSurface,
+                                    contentColor = NothingWhite
+                                ),
+                                modifier = Modifier
+                                    .testTag("preview_json_button")
+                                    .weight(1f)
+                                    .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
+                            ) {
+                                Text(
+                                    text = "PREVIEW / SHARE JSON",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 10.sp
+                                )
+                            }
+
+                            Button(
+                                onClick = {
+                                    scope.launch {
+                                        exportedOpmlText = viewModel.exportOpml()
+                                        showExportDialog = true
+                                    }
+                                },
+                                shape = RoundedCornerShape(4.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = NothingSurface,
+                                    contentColor = NothingWhite
+                                ),
+                                modifier = Modifier
+                                    .testTag("export_opml_button")
+                                    .weight(1f)
+                                    .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
+                            ) {
+                                Text(
+                                    text = "OPML BACKUP",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 10.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // OFFLINE CACHE SECTION
+            item {
+                Spacer(modifier = Modifier.height(16.dp))
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -393,6 +992,244 @@ fun SettingsScreen(viewModel: RssViewModel) {
                 }
             }
         }
+    }
+
+    // Export JSON Preview Dialog
+    if (showJsonPreviewDialog) {
+        AlertDialog(
+            onDismissRequest = { showJsonPreviewDialog = false },
+            title = {
+                Text(
+                    text = "JSON FEED & TAGS BACKUP",
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    color = NothingWhite
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "100% Private, On-Device JSON Export containing your feeds, categories, tags, and auto-tagger rules:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = NothingTextMuted
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = exportedJsonText,
+                        onValueChange = {},
+                        readOnly = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(200.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = NothingRed,
+                            unfocusedBorderColor = NothingBorder,
+                            focusedTextColor = NothingWhite,
+                            unfocusedTextColor = NothingWhite
+                        )
+                    )
+                }
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            jsonExportStringForSave = exportedJsonText
+                            showJsonPreviewDialog = false
+                            createJsonFileLauncher.launch("nothing_rss_feeds_backup.json")
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = NothingRed)
+                    ) {
+                        Text("SAVE FILE", fontFamily = FontFamily.Monospace, color = NothingWhite, fontSize = 11.sp)
+                    }
+
+                    Button(
+                        onClick = {
+                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "application/json"
+                                putExtra(Intent.EXTRA_SUBJECT, "Nothing RSS Feeds & Tags Backup")
+                                putExtra(Intent.EXTRA_TEXT, exportedJsonText)
+                            }
+                            context.startActivity(Intent.createChooser(shareIntent, "Share JSON Backup"))
+                            showJsonPreviewDialog = false
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = NothingSurface)
+                    ) {
+                        Text("SHARE", fontFamily = FontFamily.Monospace, color = NothingWhite, fontSize = 11.sp)
+                    }
+                }
+            },
+            dismissButton = {
+                Button(
+                    onClick = { showJsonPreviewDialog = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = NothingSurface)
+                ) {
+                    Text("CLOSE", fontFamily = FontFamily.Monospace, color = NothingWhite, fontSize = 11.sp)
+                }
+            },
+            containerColor = NothingDarkGray,
+            titleContentColor = NothingWhite
+        )
+    }
+
+    // Export OPML Dialog
+    if (showExportDialog) {
+        AlertDialog(
+            onDismissRequest = { showExportDialog = false },
+            title = {
+                Text(
+                    text = "EXPORT OPML SUBSCRIPTIONS",
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    color = NothingWhite
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "Share or copy your subscriptions backup string below:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = NothingTextMuted
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = exportedOpmlText,
+                        onValueChange = {},
+                        readOnly = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(160.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = NothingRed,
+                            unfocusedBorderColor = NothingBorder,
+                            focusedTextColor = NothingWhite,
+                            unfocusedTextColor = NothingWhite
+                        )
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/xml"
+                            putExtra(Intent.EXTRA_SUBJECT, "Nothing RSS OPML Subscriptions Backup")
+                            putExtra(Intent.EXTRA_TEXT, exportedOpmlText)
+                        }
+                        context.startActivity(Intent.createChooser(shareIntent, "Share OPML Backup"))
+                        showExportDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = NothingRed)
+                ) {
+                    Text("SHARE OPML", fontFamily = FontFamily.Monospace, color = NothingWhite)
+                }
+            },
+            dismissButton = {
+                Button(
+                    onClick = { showExportDialog = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = NothingSurface)
+                ) {
+                    Text("CLOSE", fontFamily = FontFamily.Monospace, color = NothingWhite)
+                }
+            },
+            containerColor = NothingDarkGray,
+            titleContentColor = NothingWhite
+        )
+    }
+
+    // Import OPML Dialog
+    if (showImportDialog) {
+        AlertDialog(
+            onDismissRequest = { showImportDialog = false },
+            title = {
+                Text(
+                    text = "IMPORT OPML SUBSCRIPTIONS",
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    color = NothingWhite
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "Choose an OPML file from device storage or paste OPML XML content below:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = NothingTextMuted
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Button(
+                        onClick = {
+                            showImportDialog = false
+                            opmlPickerLauncher.launch("*/*")
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = NothingSurface),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.FileDownload,
+                                contentDescription = "Pick File",
+                                tint = NothingRed,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("PICK .OPML FILE FROM DEVICE", fontFamily = FontFamily.Monospace, color = NothingWhite, fontSize = 11.sp)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    OutlinedTextField(
+                        value = importInputText,
+                        onValueChange = { importInputText = it },
+                        placeholder = { Text("Or paste <opml> XML content here...", color = NothingTextMuted) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(120.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = NothingRed,
+                            unfocusedBorderColor = NothingBorder,
+                            focusedTextColor = NothingWhite,
+                            unfocusedTextColor = NothingWhite
+                        )
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (importInputText.isNotBlank()) {
+                            scope.launch {
+                                val count = viewModel.importOpmlXml(importInputText)
+                                Toast.makeText(context, "Successfully imported $count feed(s)!", Toast.LENGTH_LONG).show()
+                                importInputText = ""
+                                showImportDialog = false
+                            }
+                        }
+                    },
+                    enabled = importInputText.isNotBlank(),
+                    colors = ButtonDefaults.buttonColors(containerColor = NothingRed)
+                ) {
+                    Text("IMPORT TEXT", fontFamily = FontFamily.Monospace, color = NothingWhite)
+                }
+            },
+            dismissButton = {
+                Button(
+                    onClick = { showImportDialog = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = NothingSurface)
+                ) {
+                    Text("CANCEL", fontFamily = FontFamily.Monospace, color = NothingWhite)
+                }
+            },
+            containerColor = NothingDarkGray,
+            titleContentColor = NothingWhite
+        )
     }
 
     // Edit Feed Details Dialog

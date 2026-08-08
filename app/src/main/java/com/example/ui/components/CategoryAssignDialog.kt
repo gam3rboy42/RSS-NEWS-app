@@ -50,6 +50,8 @@ import com.example.ui.theme.NothingSurface
 import com.example.ui.theme.NothingTextMuted
 import com.example.ui.theme.NothingTextSecondary
 import com.example.ui.theme.NothingWhite
+import androidx.compose.ui.platform.LocalContext
+import com.example.data.model.FeedCategoryAutoTagger
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -194,12 +196,47 @@ fun CategoryAssignDialog(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                Text(
-                    text = "ASSIGN CATEGORY / FOLDER:",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = NothingWhite,
-                    fontWeight = FontWeight.Bold
-                )
+                val context = LocalContext.current
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "ASSIGN CATEGORY / FOLDER:",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = com.example.ui.theme.NothingWhite,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .testTag("auto_detect_category_button")
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(NothingSurface)
+                            .border(1.dp, NothingRed, RoundedCornerShape(4.dp))
+                            .clickable {
+                                val detected = FeedCategoryAutoTagger.detectCategory(
+                                    context = context,
+                                    feedUrl = editableUrl,
+                                    feedTitle = editableTitle,
+                                    feedDescription = feed.description
+                                )
+                                selectedFolder = detected
+                                customFolderName = ""
+                            }
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "⚡ AUTO-DETECT",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = NothingRed
+                        )
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(8.dp))
 

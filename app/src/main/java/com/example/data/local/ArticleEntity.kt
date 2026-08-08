@@ -17,9 +17,22 @@ data class ArticleEntity(
     val pubDate: String = "",
     val pubDateTimestamp: Long = System.currentTimeMillis(),
     val imageUrl: String? = null,
+    val author: String = "",
     val isBookmarked: Boolean = false,
     val isRead: Boolean = false,
     val isDeal: Boolean = false,
     val isPreferredSource: Boolean = false,
-    val storyClusterHash: String = "" // Normalized hash for stacking identical stories
+    val isSavedForOffline: Boolean = false,
+    val isLiked: Boolean = false,
+    val isDisliked: Boolean = false,
+    val isArchived: Boolean = false,
+    val isDiscoveredRecommendation: Boolean = false,
+    val storyClusterHash: String = "", // Normalized hash for stacking identical stories
+    val subcategory: String = "", // Auto-analyzed subcategory for smart recommendations
+    val mediaUrl: String? = null, // Audio or Video media file URL (MP3, MP4, M4A, YouTube, etc.)
+    val mediaType: String? = null, // "AUDIO", "VIDEO"
+    val isPodcast: Boolean = false, // Flag indicating podcast audio/video episode
+    val isVideoPodcast: Boolean = false, // Flag indicating video podcast
+    val duration: String? = null, // Episode duration (e.g., "45:12")
+    val isDecoupled: Boolean = false // User manually decoupled/unstacked this story from cluster
 )

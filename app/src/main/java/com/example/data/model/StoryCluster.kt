@@ -14,6 +14,7 @@ data class StoryCluster(
     val clusterId: String,
     val primaryTitle: String,
     val category: String,
+    val subcategory: String = "",
     val isDeal: Boolean,
     val isBookmarked: Boolean,
     val latestTimestamp: Long,
@@ -34,12 +35,15 @@ object StoryClusterer {
         "a", "an", "the", "in", "on", "at", "to", "for", "of", "with", "by", "from",
         "and", "or", "but", "is", "are", "was", "were", "be", "been", "being",
         "it", "its", "this", "that", "these", "those", "how", "what", "why", "who",
-        "new", "says", "report", "first", "after", "over", "about", "more"
+        "new", "says", "report", "first", "after", "over", "about", "more", "will",
+        "has", "have", "had", "can", "could", "should", "would", "may", "might",
+        "today", "best", "deal", "deals", "latest", "top", "world", "review", "update",
+        "video", "photos", "watch", "daily", "week", "year", "news", "guide", "here"
     )
 
     fun clusterArticles(
         articles: List<ArticleEntity>,
-        timeRangeFilter: TimeRangeFilter = TimeRangeFilter.ALL_TIME,
+        timeRangeFilter: TimeRangeFilter = TimeRangeFilter.ONE_WEEK,
         randomSeed: Long = 0L
     ): List<StoryCluster> {
         if (articles.isEmpty()) return emptyList()
@@ -50,27 +54,57 @@ object StoryClusterer {
 
         // 1. Time range filter
         val timeFilteredArticles = articles.filter { article ->
-            when (timeRangeFilter) {
-                TimeRangeFilter.SAME_DAY -> (currentTime - article.pubDateTimestamp) <= dayInMillis
-                TimeRangeFilter.ONE_WEEK -> (currentTime - article.pubDateTimestamp) <= weekInMillis
-                TimeRangeFilter.ALL_TIME -> true
+            if (article.pubDateTimestamp <= 0L) true
+            else {
+                when (timeRangeFilter) {
+                    TimeRangeFilter.SAME_DAY -> (currentTime - article.pubDateTimestamp) <= dayInMillis
+                    TimeRangeFilter.ONE_WEEK -> (currentTime - article.pubDateTimestamp) <= weekInMillis
+                    TimeRangeFilter.ALL_TIME -> true
+                }
             }
         }
 
-        if (timeFilteredArticles.isEmpty()) return emptyList()
+        val articlesToCluster = if (timeFilteredArticles.isNotEmpty()) {
+            timeFilteredArticles
+        } else {
+            articles
+        }
 
         val clusters = mutableListOf<MutableList<ArticleEntity>>()
 
-        for (article in timeFilteredArticles) {
+        for (article in articlesToCluster) {
+            if (article.isDecoupled) {
+                clusters.add(mutableListOf(article))
+                continue
+            }
+
             val articleWords = extractSignificantWords(article.title)
             var matchedCluster: MutableList<ArticleEntity>? = null
 
             for (cluster in clusters) {
                 val representative = cluster.first()
+                if (representative.isDecoupled) continue
+
                 val repWords = extractSignificantWords(representative.title)
                 
-                val similarity = calculateJaccardSimilarity(articleWords, repWords)
-                if (similarity >= 0.42) {
+                val commonWords = articleWords.intersect(repWords)
+                val unionSize = articleWords.union(repWords).size
+                val similarity = if (unionSize > 0) commonWords.size.toDouble() / unionSize else 0.0
+
+                val timeDiffHours = Math.abs(article.pubDateTimestamp - representative.pubDateTimestamp) / (1000 * 60 * 60)
+                val isRecent = timeDiffHours <= 72 // Within 3 days
+
+                // Strict topic similarity check:
+                // 1) Must be within 3 days time window
+                // 2) Must share at least 2 significant keywords with similarity >= 0.28
+                // 3) OR share 1 distinct long keyword (>= 5 chars, e.g. "macbook", "nvidia") with similarity >= 0.40
+                val isTopicMatch = isRecent && (
+                    (commonWords.size >= 2 && similarity >= 0.28) ||
+                    (commonWords.size >= 1 && commonWords.any { it.length >= 5 } && similarity >= 0.40) ||
+                    (similarity >= 0.50)
+                )
+
+                if (isTopicMatch) {
                     matchedCluster = cluster
                     break
                 }
@@ -93,11 +127,13 @@ object StoryClusterer {
             val maxTimestamp = sortedArticles.maxOf { it.pubDateTimestamp }
             val hasDeal = sortedArticles.any { it.isDeal }
             val hasBookmark = sortedArticles.any { it.isBookmarked }
+            val subcat = primary.subcategory.ifBlank { SubcategoryAnalyzer.analyze(primary.title, primary.description, primary.category) }
 
             StoryCluster(
                 clusterId = "cluster_${index}_${primary.id.hashCode()}",
                 primaryTitle = primary.title,
                 category = primary.category,
+                subcategory = subcat,
                 isDeal = hasDeal,
                 isBookmarked = hasBookmark,
                 latestTimestamp = maxTimestamp,

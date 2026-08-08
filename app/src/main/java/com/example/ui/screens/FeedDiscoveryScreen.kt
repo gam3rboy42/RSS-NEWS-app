@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
@@ -37,9 +38,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,8 +56,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.example.data.local.FeedEntity
 import com.example.data.model.DefaultFeedCatalog
+import com.example.data.model.FeedDiscoveryItem
 import com.example.ui.components.CategoryAssignDialog
 import com.example.ui.components.CategoryPillBar
 import com.example.ui.theme.NothingBlack
@@ -75,6 +80,12 @@ fun FeedDiscoveryScreen(viewModel: RssViewModel) {
     val allFeeds by viewModel.allFeeds.collectAsState()
     val availableCategories by viewModel.availableCategories.collectAsState()
 
+    val topicSearchResults by viewModel.topicSearchResults.collectAsState()
+    val isSearchingTopics by viewModel.isSearchingTopics.collectAsState()
+    val preferredGames by viewModel.preferredGames.collectAsState()
+    val onlyPreferredGames by viewModel.onlyPreferredGames.collectAsState()
+
+    var topicInput by remember { mutableStateOf("") }
     var searchQuery by remember { mutableStateOf("") }
     var customUrl by remember { mutableStateOf("") }
     var customTitle by remember { mutableStateOf("") }
@@ -83,31 +94,123 @@ fun FeedDiscoveryScreen(viewModel: RssViewModel) {
     var addResultMsg by remember { mutableStateOf<String?>(null) }
     var isSubmitting by remember { mutableStateOf(false) }
     var editingFeedForFolder by remember { mutableStateOf<FeedEntity?>(null) }
+    var showNewFolderDialog by remember { mutableStateOf(false) }
+    var newFolderNameInput by remember { mutableStateOf("") }
+    var autoTagStatusMsg by remember { mutableStateOf<String?>(null) }
+    var isAutoTagging by remember { mutableStateOf(false) }
 
-    val subscribedUrls = remember(allFeeds) { allFeeds.map { it.url }.toSet() }
-    val preferredUrls = remember(allFeeds) { allFeeds.filter { it.isPreferred }.map { it.url }.toSet() }
+    val normalizeUrlKey: (String) -> String = remember {
+        { url -> url.trim().lowercase().removeSuffix("/") }
+    }
 
-    val filteredCurated = remember(discoveryCategory, searchQuery) {
-        DefaultFeedCatalog.curatedFeeds.filter { item ->
-            val matchesCategory = discoveryCategory == "ALL" || item.category.equals(discoveryCategory, ignoreCase = true)
-            val matchesSearch = searchQuery.isBlank() || 
-                    item.title.contains(searchQuery, ignoreCase = true) ||
-                    item.description.contains(searchQuery, ignoreCase = true) ||
-                    item.category.contains(searchQuery, ignoreCase = true) ||
-                    item.url.contains(searchQuery, ignoreCase = true)
-            matchesCategory && matchesSearch
+    val subscribedUrls by remember(allFeeds) {
+        derivedStateOf {
+            val set = HashSet<String>(allFeeds.size)
+            for (f in allFeeds) {
+                set.add(f.url.trim().lowercase().removeSuffix("/"))
+            }
+            set
+        }
+    }
+    val preferredUrls by remember(allFeeds) {
+        derivedStateOf {
+            val set = HashSet<String>(allFeeds.size)
+            for (f in allFeeds) {
+                if (f.isPreferred) {
+                    set.add(f.url.trim().lowercase().removeSuffix("/"))
+                }
+            }
+            set
         }
     }
 
-    val filteredUserFeeds = remember(allFeeds, searchQuery, discoveryCategory) {
-        allFeeds.filter { feed ->
-            val matchesCategory = discoveryCategory == "ALL" || feed.category.equals(discoveryCategory, ignoreCase = true)
-            val matchesSearch = searchQuery.isBlank() ||
-                    feed.title.contains(searchQuery, ignoreCase = true) ||
-                    feed.category.contains(searchQuery, ignoreCase = true) ||
-                    feed.url.contains(searchQuery, ignoreCase = true)
-            matchesCategory && matchesSearch
+    val onPreviewWeb: (String) -> Unit = remember(context) {
+        { url -> InAppBrowser.openUrl(context, url) }
+    }
+
+    val onTogglePreferred: (String, Boolean) -> Unit = remember(viewModel) {
+        { url, pref -> viewModel.toggleFeedPreferred(url, pref) }
+    }
+
+    val onDeleteFeed: (String) -> Unit = remember(viewModel) {
+        { url -> viewModel.deleteFeed(url) }
+    }
+
+    val onEditFolder: (FeedEntity) -> Unit = remember {
+        { feed -> editingFeedForFolder = feed }
+    }
+
+    val onToggleSubscribe: (FeedDiscoveryItem, Boolean) -> Unit = remember(viewModel) {
+        { feedItem, sub ->
+            if (!sub) {
+                viewModel.addCustomFeedUrl(feedItem.url, feedItem.title, feedItem.category) {}
+            } else {
+                viewModel.deleteFeed(feedItem.url)
+            }
         }
+    }
+
+    val onSubscribeTopic: (FeedDiscoveryItem) -> Unit = remember(viewModel) {
+        { itemToSub ->
+            viewModel.addCustomFeedUrl(
+                url = itemToSub.url,
+                title = itemToSub.title,
+                category = itemToSub.category
+            ) { success ->
+                if (success) {
+                    addResultMsg = "✔ Subscribed to ${itemToSub.title}"
+                }
+            }
+        }
+    }
+
+    val onSelectDiscoveryCategory: (String) -> Unit = remember {
+        { cat -> discoveryCategory = cat }
+    }
+
+    val filteredCurated by remember(discoveryCategory, searchQuery) {
+        derivedStateOf {
+            val query = searchQuery.trim().lowercase()
+            val isAllCat = discoveryCategory == "ALL" || discoveryCategory.isBlank()
+            DefaultFeedCatalog.curatedFeeds.filter { item ->
+                val matchesCategory = isAllCat || item.category.equals(discoveryCategory, ignoreCase = true)
+                if (!matchesCategory) return@filter false
+                if (query.isEmpty()) return@filter true
+                item.title.lowercase().contains(query) ||
+                        item.description.lowercase().contains(query) ||
+                        item.category.lowercase().contains(query) ||
+                        item.url.lowercase().contains(query)
+            }
+        }
+    }
+
+    val filteredUserFeeds by remember(allFeeds, searchQuery, discoveryCategory) {
+        derivedStateOf {
+            val query = searchQuery.trim().lowercase()
+            val isAllCat = discoveryCategory == "ALL" || discoveryCategory.isBlank()
+            allFeeds.filter { feed ->
+                val matchesCategory = isAllCat || feed.category.equals(discoveryCategory, ignoreCase = true)
+                if (!matchesCategory) return@filter false
+                if (query.isEmpty()) return@filter true
+                feed.title.lowercase().contains(query) ||
+                        feed.category.lowercase().contains(query) ||
+                        feed.url.lowercase().contains(query)
+            }
+        }
+    }
+
+    val feedsGroupedByFolder by remember {
+        derivedStateOf {
+            filteredUserFeeds.groupBy { it.category.ifBlank { "GENERAL" }.uppercase() }
+        }
+    }
+
+    val popularTopics = remember {
+        listOf("Retro Gaming", "Formula 1", "AI Hardware", "SpaceX", "Linux Kernel", "Crypto", "Japanese Cooking")
+    }
+
+    val nonAllCategories = remember(availableCategories) {
+        availableCategories.filter { it != "ALL" }
     }
 
     Column(
@@ -148,8 +251,189 @@ fun FeedDiscoveryScreen(viewModel: RssViewModel) {
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 80.dp)
         ) {
+            // TOPIC RSS LOOKUP CARD
+            item(key = "topic_search_card", contentType = "header_card") {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(NothingDarkGray)
+                        .border(1.dp, NothingRed, RoundedCornerShape(6.dp))
+                        .padding(16.dp)
+                ) {
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = "Search Topic Feeds",
+                                tint = NothingRed,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "RSS FEED LOOKUP BY TOPIC",
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = NothingWhite
+                            )
+                        }
+
+                        Text(
+                            text = "TYPE ANY TOPIC TO SEARCH AND DISCOVER VALID RSS / ATOM FEEDS",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = NothingTextMuted,
+                            fontSize = 10.sp
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            OutlinedTextField(
+                                value = topicInput,
+                                onValueChange = { topicInput = it },
+                                placeholder = {
+                                    Text(
+                                        "e.g. Retro Gaming, SpaceX, AI Hardware...",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp,
+                                        color = NothingTextMuted
+                                    )
+                                },
+                                singleLine = true,
+                                textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                    color = NothingWhite,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 12.sp
+                                ),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = NothingRed,
+                                    unfocusedBorderColor = NothingBorder,
+                                    focusedContainerColor = NothingSurface,
+                                    unfocusedContainerColor = NothingSurface
+                                ),
+                                modifier = Modifier
+                                    .testTag("topic_rss_search_input")
+                                    .weight(1f)
+                            )
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            Button(
+                                onClick = {
+                                    if (topicInput.isNotBlank()) {
+                                        viewModel.searchFeedsByTopic(topicInput.trim())
+                                    }
+                                },
+                                enabled = topicInput.isNotBlank() && !isSearchingTopics,
+                                shape = RoundedCornerShape(4.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = NothingRed,
+                                    contentColor = NothingWhite
+                                ),
+                                modifier = Modifier
+                                    .testTag("search_topic_rss_button")
+                                    .height(52.dp)
+                            ) {
+                                Text(
+                                    text = if (isSearchingTopics) "SEARCHING..." else "SEARCH",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Quick Topic Suggestions
+                        Text(
+                            text = "POPULAR TOPIC IDEAS:",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = NothingTextMuted,
+                            fontSize = 9.sp
+                        )
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            popularTopics.forEach { topicIdea ->
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(NothingSurface)
+                                        .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
+                                        .clickable {
+                                            topicInput = topicIdea
+                                            viewModel.searchFeedsByTopic(topicIdea)
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        text = topicIdea.uppercase(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = NothingTextSecondary,
+                                        fontSize = 9.sp
+                                    )
+                                }
+                            }
+                        }
+
+                        // Search Results Display
+                        if (isSearchingTopics) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "🔍 Searching & discovering RSS feeds for '$topicInput'...",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = NothingRed,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        } else if (topicSearchResults.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "FOUND ${topicSearchResults.size} RSS FEEDS FOR '$topicInput':",
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                color = NothingWhite
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                topicSearchResults.forEach { feedItem ->
+                                    val isSubscribed = subscribedUrls.contains(normalizeUrlKey(feedItem.url))
+                                    TopicSearchResultCard(
+                                        feedItem = feedItem,
+                                        isSubscribed = isSubscribed,
+                                        onSubscribe = onSubscribeTopic
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // GAMING PREFERRED GAMES MANAGER CARD
+            item(key = "preferred_games_card", contentType = "header_card") {
+                com.example.ui.components.PreferredGamesBar(
+                    preferredGames = preferredGames,
+                    onlyPreferredGames = onlyPreferredGames,
+                    onToggleOnlyPreferred = { viewModel.toggleOnlyPreferredGames() },
+                    onAddGame = { viewModel.addPreferredGame(it) },
+                    onRemoveGame = { viewModel.removePreferredGame(it) },
+                    modifier = Modifier.padding(vertical = 8.dp)
+                )
+            }
+
             // SEARCH INPUT
-            item {
+            item(key = "search_input_card", contentType = "header_card") {
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
@@ -189,7 +473,7 @@ fun FeedDiscoveryScreen(viewModel: RssViewModel) {
             }
 
             // ADD CUSTOM RSS CARD
-            item {
+            item(key = "add_custom_rss_card", contentType = "header_card") {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -266,7 +550,7 @@ fun FeedDiscoveryScreen(viewModel: RssViewModel) {
                             verticalArrangement = Arrangement.spacedBy(6.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            availableCategories.filter { it != "ALL" }.forEach { cat ->
+                            nonAllCategories.forEach { cat ->
                                 val isSelected = cat.equals(customCategory, ignoreCase = true)
                                 Box(
                                     modifier = Modifier
@@ -376,8 +660,8 @@ fun FeedDiscoveryScreen(viewModel: RssViewModel) {
                 }
             }
 
-            // SUBSCRIBED FEEDS LIST SECTION
-            item {
+            // SUBSCRIBED FEEDS GROUPED BY CUSTOM FOLDERS
+            item(key = "user_folders_hdr", contentType = "header_card") {
                 Spacer(modifier = Modifier.height(16.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -385,24 +669,109 @@ fun FeedDiscoveryScreen(viewModel: RssViewModel) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "YOUR SUBSCRIBED FEEDS (${allFeeds.size})",
+                        text = "YOUR FOLDERS (${feedsGroupedByFolder.size}) • FEEDS (${allFeeds.size})",
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
+                        fontSize = 13.sp,
                         color = NothingWhite
                     )
-                    Text(
-                        text = "TAP 📁 TO RE-FOLDER",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = NothingRed,
-                        fontSize = 10.sp
-                    )
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        // Auto-Tag Feeds On-Device Button
+                        Box(
+                            modifier = Modifier
+                                .testTag("auto_tag_all_feeds_button")
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(NothingSurface)
+                                .border(1.dp, NothingRed, RoundedCornerShape(4.dp))
+                                .clickable(enabled = !isAutoTagging) {
+                                    isAutoTagging = true
+                                    autoTagStatusMsg = "⚡ Analyzing feeds & user preferences..."
+                                    viewModel.autoTagAllFeedsOnDevice { count ->
+                                        isAutoTagging = false
+                                        autoTagStatusMsg = "✔ ON-DEVICE AUTO-TAGGER: Categorized $count feeds (Tech, Finance, Science...)"
+                                    }
+                                }
+                                .padding(horizontal = 8.dp, vertical = 5.dp)
+                        ) {
+                            Text(
+                                text = if (isAutoTagging) "⚡ TAGGING..." else "⚡ AUTO-TAG FEEDS",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = NothingRed
+                            )
+                        }
+
+                        // Create New Custom Folder Button
+                        Box(
+                            modifier = Modifier
+                                .testTag("create_custom_folder_button")
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(NothingSurface)
+                                .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
+                                .clickable { showNewFolderDialog = true }
+                                .padding(horizontal = 8.dp, vertical = 5.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Folder,
+                                    contentDescription = "New Folder",
+                                    tint = NothingRed,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "+ NEW FOLDER",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = NothingWhite
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (autoTagStatusMsg != null) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(NothingDarkGray)
+                            .border(1.dp, NothingRed.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+                            .padding(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = autoTagStatusMsg!!,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = NothingWhite,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Dismiss",
+                                tint = NothingTextMuted,
+                                modifier = Modifier
+                                    .size(16.dp)
+                                    .clickable { autoTagStatusMsg = null }
+                            )
+                        }
+                    }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
-            if (filteredUserFeeds.isEmpty()) {
-                item {
+            if (feedsGroupedByFolder.isEmpty()) {
+                item(key = "user_folders_empty", contentType = "header_card") {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -421,134 +790,69 @@ fun FeedDiscoveryScreen(viewModel: RssViewModel) {
                     }
                 }
             } else {
-                items(
-                    items = filteredUserFeeds,
-                    key = { "user_${it.url}" }
-                ) { userFeed ->
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(NothingDarkGray)
-                            .border(
-                                1.dp,
-                                if (userFeed.isPreferred) NothingRed else NothingBorder,
-                                RoundedCornerShape(6.dp)
-                            )
-                            .padding(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                feedsGroupedByFolder.forEach { (folderName, folderFeeds) ->
+                    // Folder Header
+                    item(key = "folder_hdr_$folderName", contentType = "folder_header") {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 10.dp, bottom = 4.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(NothingSurface)
+                                .border(1.dp, NothingRed.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = userFeed.title.uppercase(),
-                                        fontFamily = FontFamily.Monospace,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp,
-                                        color = NothingWhite
-                                    )
-
-                                    Spacer(modifier = Modifier.width(6.dp))
-
-                                    // Folder Chip Button
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(2.dp))
-                                            .background(NothingSurface)
-                                            .border(1.dp, NothingBorder, RoundedCornerShape(2.dp))
-                                            .clickable { editingFeedForFolder = userFeed }
-                                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                                    ) {
-                                        Text(
-                                            text = "📁 ${userFeed.category.uppercase()}",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = NothingWhite,
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(2.dp))
-
-                                Text(
-                                    text = userFeed.url,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = NothingTextMuted,
-                                    fontSize = 10.sp
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.width(8.dp))
-
                             Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                // Edit Feed Details
-                                IconButton(
-                                    onClick = { editingFeedForFolder = userFeed },
-                                    modifier = Modifier.size(28.dp)
-                                ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(
-                                        imageVector = Icons.Default.Edit,
-                                        contentDescription = "Edit Feed Details",
+                                        imageVector = Icons.Default.Folder,
+                                        contentDescription = "Folder",
                                         tint = NothingRed,
                                         modifier = Modifier.size(16.dp)
                                     )
-                                }
-
-                                // Web Preview
-                                IconButton(
-                                    onClick = { InAppBrowser.openUrl(context, userFeed.url) },
-                                    modifier = Modifier.size(28.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Language,
-                                        contentDescription = "Web Preview",
-                                        tint = NothingWhite,
-                                        modifier = Modifier.size(16.dp)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "FOLDER: $folderName",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp,
+                                        color = NothingWhite
                                     )
                                 }
-
-                                // Preferred Toggle
-                                IconButton(
-                                    onClick = { viewModel.toggleFeedPreferred(userFeed.url, userFeed.isPreferred) },
-                                    modifier = Modifier.size(28.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = if (userFeed.isPreferred) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                                        contentDescription = "Star",
-                                        tint = if (userFeed.isPreferred) NothingRed else NothingTextMuted,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-
-                                // Delete Feed
-                                IconButton(
-                                    onClick = { viewModel.deleteFeed(userFeed.url) },
-                                    modifier = Modifier.size(28.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.DeleteOutline,
-                                        contentDescription = "Unsubscribe",
-                                        tint = NothingTextMuted,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
+                                Text(
+                                    text = "${folderFeeds.size} ${if (folderFeeds.size == 1) "FEED" else "FEEDS"}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = NothingTextSecondary,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
+                    }
+
+                    // Feeds in Folder
+                    items(
+                        items = folderFeeds,
+                        key = { "user_${it.url}" },
+                        contentType = { "user_feed_card" }
+                    ) { userFeed ->
+                        UserFeedCard(
+                            userFeed = userFeed,
+                            onEditFolder = onEditFolder,
+                            onPreviewWeb = onPreviewWeb,
+                            onTogglePreferred = onTogglePreferred,
+                            onDeleteFeed = onDeleteFeed
+                        )
                     }
                 }
             }
 
             // CURATED DIRECTORY SECTION
-            item {
+            item(key = "curated_directory_hdr", contentType = "header_card") {
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
                     text = "CURATED FEED DIRECTORY",
@@ -561,7 +865,7 @@ fun FeedDiscoveryScreen(viewModel: RssViewModel) {
 
                 CategoryPillBar(
                     selectedCategory = discoveryCategory,
-                    onSelectCategory = { discoveryCategory = it },
+                    onSelectCategory = onSelectDiscoveryCategory,
                     categories = availableCategories
                 )
 
@@ -571,139 +875,21 @@ fun FeedDiscoveryScreen(viewModel: RssViewModel) {
             // Curated Feeds List
             items(
                 items = filteredCurated,
-                key = { "curated_${it.url}" }
+                key = { "curated_${it.url}" },
+                contentType = { "curated_feed_card" }
             ) { item ->
-                val isSubscribed = subscribedUrls.contains(item.url)
-                val isPreferred = preferredUrls.contains(item.url)
+                val cleanKey = remember(item.url) { normalizeUrlKey(item.url) }
+                val isSubscribed = subscribedUrls.contains(cleanKey)
+                val isPreferred = preferredUrls.contains(cleanKey)
 
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(NothingDarkGray)
-                        .border(
-                            1.dp,
-                            if (isPreferred) NothingRed else NothingBorder,
-                            RoundedCornerShape(6.dp)
-                        )
-                        .padding(14.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = item.title.uppercase(),
-                                    fontFamily = FontFamily.Monospace,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp,
-                                    color = NothingWhite
-                                )
-
-                                Spacer(modifier = Modifier.width(6.dp))
-
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(2.dp))
-                                        .background(NothingSurface)
-                                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                                ) {
-                                    Text(
-                                        text = item.category,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = NothingTextSecondary,
-                                        fontSize = 8.sp
-                                    )
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(4.dp))
-
-                            Text(
-                                text = item.description,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = NothingTextMuted
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.width(10.dp))
-
-                        // Actions: Web Preview, Preferred Star, Subscribe Toggle
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            // In-App Browser Preview
-                            Box(
-                                modifier = Modifier
-                                    .testTag("preview_feed_web_${item.title}")
-                                    .clip(CircleShape)
-                                    .background(NothingSurface)
-                                    .border(1.dp, NothingBorder, CircleShape)
-                                    .clickable {
-                                        InAppBrowser.openUrl(context, item.url)
-                                    }
-                                    .padding(8.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Language,
-                                    contentDescription = "Preview Web Source",
-                                    tint = NothingWhite,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-
-                            // Star Preferred Toggle
-                            Box(
-                                modifier = Modifier
-                                    .testTag("toggle_preferred_feed_${item.title}")
-                                    .clip(CircleShape)
-                                    .background(if (isPreferred) NothingRed.copy(alpha = 0.2f) else NothingSurface)
-                                    .border(1.dp, if (isPreferred) NothingRed else NothingBorder, CircleShape)
-                                    .clickable {
-                                        viewModel.toggleFeedPreferred(item.url, isPreferred)
-                                    }
-                                    .padding(8.dp)
-                            ) {
-                                Icon(
-                                    imageVector = if (isPreferred) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                                    contentDescription = "Preferred",
-                                    tint = if (isPreferred) NothingRed else NothingTextMuted,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-
-                            // Subscribe Toggle
-                            Box(
-                                modifier = Modifier
-                                    .testTag("subscribe_feed_${item.title}")
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(if (isSubscribed) NothingSurface else NothingRed)
-                                    .border(1.dp, if (isSubscribed) NothingBorder else NothingRed, RoundedCornerShape(4.dp))
-                                    .clickable {
-                                        if (!isSubscribed) {
-                                            viewModel.addCustomFeedUrl(item.url, item.title, item.category) {}
-                                        } else {
-                                            viewModel.deleteFeed(item.url)
-                                        }
-                                    }
-                                    .padding(horizontal = 10.dp, vertical = 8.dp)
-                            ) {
-                                Text(
-                                    text = if (isSubscribed) "ADDED" else "+ SUBSCRIBE",
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isSubscribed) NothingTextSecondary else NothingWhite
-                                )
-                            }
-                        }
-                    }
-                }
+                CuratedFeedCard(
+                    item = item,
+                    isSubscribed = isSubscribed,
+                    isPreferred = isPreferred,
+                    onPreviewWeb = onPreviewWeb,
+                    onTogglePreferred = onTogglePreferred,
+                    onToggleSubscribe = onToggleSubscribe
+                )
             }
         }
     }
@@ -720,5 +906,477 @@ fun FeedDiscoveryScreen(viewModel: RssViewModel) {
             }
         )
     }
+
+    // New Custom Folder Creator Dialog
+    if (showNewFolderDialog) {
+        Dialog(onDismissRequest = { showNewFolderDialog = false }) {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = NothingBlack,
+                modifier = Modifier
+                    .border(1.dp, NothingRed, RoundedCornerShape(8.dp))
+                    .padding(2.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp)
+                ) {
+                    Text(
+                        text = "CREATE CUSTOM FOLDER",
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        color = NothingRed
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Enter a custom folder name to group your RSS feeds (e.g. TECH, WORK, SCIENCE, PODCASTS):",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = NothingTextMuted
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    OutlinedTextField(
+                        value = newFolderNameInput,
+                        onValueChange = { newFolderNameInput = it },
+                        placeholder = {
+                            Text(
+                                "FOLDER NAME",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp,
+                                color = NothingTextMuted
+                            )
+                        },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(
+                            color = NothingWhite,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp
+                        ),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = NothingRed,
+                            unfocusedBorderColor = NothingBorder,
+                            focusedContainerColor = NothingSurface,
+                            unfocusedContainerColor = NothingSurface
+                        ),
+                        modifier = Modifier
+                            .testTag("new_folder_name_input")
+                            .fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        Button(
+                            onClick = {
+                                showNewFolderDialog = false
+                                newFolderNameInput = ""
+                            },
+                            shape = RoundedCornerShape(4.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = NothingSurface,
+                                contentColor = NothingTextSecondary
+                            ),
+                            modifier = Modifier.border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
+                        ) {
+                            Text(
+                                text = "CANCEL",
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(10.dp))
+
+                        Button(
+                            onClick = {
+                                if (newFolderNameInput.isNotBlank()) {
+                                    val cat = newFolderNameInput.uppercase().trim()
+                                    customCategory = cat
+                                    discoveryCategory = cat
+                                    showNewFolderDialog = false
+                                    newFolderNameInput = ""
+                                }
+                            },
+                            shape = RoundedCornerShape(4.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = NothingRed,
+                                contentColor = NothingWhite
+                            ),
+                            modifier = Modifier.testTag("confirm_create_folder_button")
+                        ) {
+                            Text(
+                                text = "CREATE FOLDER",
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
+@Composable
+private fun TopicSearchResultCard(
+    feedItem: FeedDiscoveryItem,
+    isSubscribed: Boolean,
+    onSubscribe: (FeedDiscoveryItem) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(4.dp))
+            .background(NothingSurface)
+            .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
+            .padding(10.dp)
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = feedItem.title,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    color = NothingWhite,
+                    modifier = Modifier.weight(1f)
+                )
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(NothingRed)
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = feedItem.category,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = NothingWhite,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Text(
+                text = feedItem.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = NothingTextSecondary,
+                fontSize = 10.sp,
+                maxLines = 2
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = feedItem.url,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = NothingTextMuted,
+                    fontSize = 9.sp,
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f)
+                )
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                Button(
+                    onClick = { onSubscribe(feedItem) },
+                    enabled = !isSubscribed,
+                    shape = RoundedCornerShape(4.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isSubscribed) NothingDarkGray else NothingRed,
+                        contentColor = NothingWhite
+                    ),
+                    modifier = Modifier
+                        .testTag("subscribe_topic_feed_${feedItem.title}")
+                        .height(32.dp)
+                ) {
+                    Text(
+                        text = if (isSubscribed) "SUBSCRIBED" else "+ SUBSCRIBE",
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 9.sp
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UserFeedCard(
+    userFeed: FeedEntity,
+    onEditFolder: (FeedEntity) -> Unit,
+    onPreviewWeb: (String) -> Unit,
+    onTogglePreferred: (String, Boolean) -> Unit,
+    onDeleteFeed: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(NothingDarkGray)
+            .border(
+                1.dp,
+                if (userFeed.isPreferred) NothingRed else NothingBorder,
+                RoundedCornerShape(6.dp)
+            )
+            .padding(12.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = userFeed.title.uppercase(),
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        color = NothingWhite
+                    )
+
+                    Spacer(modifier = Modifier.width(6.dp))
+
+                    // Folder Chip Button
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(NothingSurface)
+                            .border(1.dp, NothingBorder, RoundedCornerShape(2.dp))
+                            .clickable { onEditFolder(userFeed) }
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "📁 ${userFeed.category.uppercase()}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = NothingWhite,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(2.dp))
+
+                Text(
+                    text = userFeed.url,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = NothingTextMuted,
+                    fontSize = 10.sp
+                )
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                // Edit Feed Details
+                IconButton(
+                    onClick = { onEditFolder(userFeed) },
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "Edit Feed Details",
+                        tint = NothingRed,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+
+                // Web Preview
+                IconButton(
+                    onClick = { onPreviewWeb(userFeed.url) },
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Language,
+                        contentDescription = "Web Preview",
+                        tint = NothingWhite,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+
+                // Preferred Toggle
+                IconButton(
+                    onClick = { onTogglePreferred(userFeed.url, userFeed.isPreferred) },
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        imageVector = if (userFeed.isPreferred) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                        contentDescription = "Star",
+                        tint = if (userFeed.isPreferred) NothingRed else NothingTextMuted,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+
+                // Delete Feed
+                IconButton(
+                    onClick = { onDeleteFeed(userFeed.url) },
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.DeleteOutline,
+                        contentDescription = "Unsubscribe",
+                        tint = NothingTextMuted,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CuratedFeedCard(
+    item: FeedDiscoveryItem,
+    isSubscribed: Boolean,
+    isPreferred: Boolean,
+    onPreviewWeb: (String) -> Unit,
+    onTogglePreferred: (String, Boolean) -> Unit,
+    onToggleSubscribe: (FeedDiscoveryItem, Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(NothingDarkGray)
+            .border(
+                1.dp,
+                if (isPreferred) NothingRed else NothingBorder,
+                RoundedCornerShape(6.dp)
+            )
+            .padding(14.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = item.title.uppercase(),
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = NothingWhite
+                    )
+
+                    Spacer(modifier = Modifier.width(6.dp))
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(NothingSurface)
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = item.category,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = NothingTextSecondary,
+                            fontSize = 8.sp
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Text(
+                    text = item.description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = NothingTextMuted
+                )
+            }
+
+            Spacer(modifier = Modifier.width(10.dp))
+
+            // Actions: Web Preview, Preferred Star, Subscribe Toggle
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                // In-App Browser Preview
+                Box(
+                    modifier = Modifier
+                        .testTag("preview_feed_web_${item.title}")
+                        .clip(CircleShape)
+                        .background(NothingSurface)
+                        .border(1.dp, NothingBorder, CircleShape)
+                        .clickable { onPreviewWeb(item.url) }
+                        .padding(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Language,
+                        contentDescription = "Preview Web Source",
+                        tint = NothingWhite,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+
+                // Star Preferred Toggle
+                Box(
+                    modifier = Modifier
+                        .testTag("toggle_preferred_feed_${item.title}")
+                        .clip(CircleShape)
+                        .background(if (isPreferred) NothingRed.copy(alpha = 0.2f) else NothingSurface)
+                        .border(1.dp, if (isPreferred) NothingRed else NothingBorder, CircleShape)
+                        .clickable { onTogglePreferred(item.url, isPreferred) }
+                        .padding(8.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isPreferred) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                        contentDescription = "Preferred",
+                        tint = if (isPreferred) NothingRed else NothingTextMuted,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+
+                // Subscribe Toggle
+                Box(
+                    modifier = Modifier
+                        .testTag("subscribe_feed_${item.title}")
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(if (isSubscribed) NothingSurface else NothingRed)
+                        .border(1.dp, if (isSubscribed) NothingBorder else NothingRed, RoundedCornerShape(4.dp))
+                        .clickable { onToggleSubscribe(item, isSubscribed) }
+                        .padding(horizontal = 10.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = if (isSubscribed) "ADDED" else "+ SUBSCRIBE",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isSubscribed) NothingTextSecondary else NothingWhite
+                    )
+                }
+            }
+        }
+    }
+}

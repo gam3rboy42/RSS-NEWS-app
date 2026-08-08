@@ -6,20 +6,22 @@ import java.util.Locale
 object DealDetector {
 
     private val dealKeywords = listOf(
-        "deal", "discount", "sale", "off", "coupon", "promo", "save $",
-        "price drop", "lowest price", "clearance", "% off", "bogo",
-        "buy 1 get 1", "cheap", "bargain", "discounted", "rebate",
-        "cashback", "affiliate", "black friday", "cyber monday", "prime day",
+        "deal", "discount", "sale", "coupon", "promo", "save $",
+        "price drop", "lowest price", "clearance", "bogo",
+        "buy 1 get 1", "bargain", "discounted", "rebate",
+        "cashback", "black friday", "cyber monday", "prime day",
         "daily deal", "best buy deal", "amazon deal"
     )
 
     fun isDeal(title: String, description: String): Boolean {
         val text = "${title.lowercase(Locale.ROOT)} ${description.lowercase(Locale.ROOT)}"
         
-        // Check for discount percentage pattern like "20% off", "50% discount"
+        // Check for discount percentage or dollar savings pattern like "20% off", "save $50", "$10 off"
         if (Regex("""\b\d{1,2}%\s+off\b""").containsMatchIn(text)) return true
         if (Regex("""\bsave\s+\$\d+""").containsMatchIn(text)) return true
         if (Regex("""\b\$\d+(\.\d{2})?\s+off\b""").containsMatchIn(text)) return true
+        if (Regex("""\b\d+%\s+discount\b""").containsMatchIn(text)) return true
+        if (Regex("""\b(great|huge|best|special)\s+deal\b""").containsMatchIn(text)) return true
 
         return dealKeywords.any { keyword ->
             text.contains(keyword)

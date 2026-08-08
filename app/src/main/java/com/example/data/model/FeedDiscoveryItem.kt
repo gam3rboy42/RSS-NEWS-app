@@ -7,14 +7,89 @@ data class FeedDiscoveryItem(
     val url: String,
     val category: String,
     val description: String,
-    val isDefaultPreferred: Boolean = false
+    val isDefaultPreferred: Boolean = false,
+    val isPodcast: Boolean = false,
+    val isVideoPodcast: Boolean = false
 )
 
 object DefaultFeedCatalog {
 
-    val categories = listOf("ALL", "TECH", "SCIENCE", "GAMING", "WORLD", "BUSINESS", "DESIGN", "AI")
+    val categories = listOf("ALL", "TECH", "SCIENCE", "GAMING", "PODCASTS", "WORLD", "BUSINESS", "DESIGN", "AI")
 
     val curatedFeeds = listOf(
+        // PODCASTS (AUDIO & VIDEO)
+        FeedDiscoveryItem(
+            title = "TWiT HD Video Netcast",
+            url = "https://feeds.twit.tv/twit_video_hd.xml",
+            category = "PODCASTS",
+            description = "🎥 Video Podcast: This Week in Tech video show covering major tech events and roundtable discussions.",
+            isDefaultPreferred = true,
+            isPodcast = true,
+            isVideoPodcast = true
+        ),
+        FeedDiscoveryItem(
+            title = "TEDTalks Video Podcast",
+            url = "https://feeds.feedburner.com/tedtalks_video",
+            category = "PODCASTS",
+            description = "🎥 Video Podcast: World-changing ideas and talks in high-definition video.",
+            isDefaultPreferred = true,
+            isPodcast = true,
+            isVideoPodcast = true
+        ),
+        FeedDiscoveryItem(
+            title = "NASA TWAN Video Podcast",
+            url = "https://www.nasa.gov/rss/dyn/TWAN_vodcast.rss",
+            category = "PODCASTS",
+            description = "🎥 Video Podcast: This Week at NASA video show featuring space missions and rocket launches.",
+            isDefaultPreferred = false,
+            isPodcast = true,
+            isVideoPodcast = true
+        ),
+        FeedDiscoveryItem(
+            title = "IGN Video Shows",
+            url = "https://feeds.feedburner.com/ign/video-podcasts",
+            category = "PODCASTS",
+            description = "🎥 Video Podcast: Gaming reviews, gameplay video podcasts, and news roundups from IGN.",
+            isDefaultPreferred = false,
+            isPodcast = true,
+            isVideoPodcast = true
+        ),
+        FeedDiscoveryItem(
+            title = "The Vergecast",
+            url = "https://feeds.megaphone.fm/vergecast",
+            category = "PODCASTS",
+            description = "🎧 Audio Podcast: Flagship weekly podcast about gadget news, tech policy, and future trends.",
+            isDefaultPreferred = true,
+            isPodcast = true,
+            isVideoPodcast = false
+        ),
+        FeedDiscoveryItem(
+            title = "Lex Fridman Podcast",
+            url = "https://lexfridman.com/feed/podcast/",
+            category = "PODCASTS",
+            description = "🎧 Audio Podcast: Conversations about AI, science, technology, history, and philosophy.",
+            isDefaultPreferred = false,
+            isPodcast = true,
+            isVideoPodcast = false
+        ),
+        FeedDiscoveryItem(
+            title = "Giant Bombcast",
+            url = "https://www.giantbomb.com/podcast-xml/giant-bombcast",
+            category = "PODCASTS",
+            description = "🎧 Audio Podcast: Weekly gaming discussions, developer interviews, and video game banter.",
+            isDefaultPreferred = false,
+            isPodcast = true,
+            isVideoPodcast = false
+        ),
+        FeedDiscoveryItem(
+            title = "Radiolab",
+            url = "https://feeds.feedburner.com/radiolab",
+            category = "PODCASTS",
+            description = "🎧 Audio Podcast: Deep dives into science, philosophy, and human curiosity.",
+            isDefaultPreferred = false,
+            isPodcast = true,
+            isVideoPodcast = false
+        ),
         // TECH
         FeedDiscoveryItem(
             title = "TechCrunch",
@@ -101,7 +176,7 @@ object DefaultFeedCatalog {
         // WORLD
         FeedDiscoveryItem(
             title = "BBC News Top Stories",
-            url = "http://feeds.bbci.co.uk/news/rss.xml",
+            url = "https://feeds.bbci.co.uk/news/rss.xml",
             category = "WORLD",
             description = "Global breaking news, world updates, and international reporting.",
             isDefaultPreferred = true

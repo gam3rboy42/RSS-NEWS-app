@@ -93,6 +93,10 @@ object RssXmlParser {
         var pubDateStr = ""
         var imageUrl: String? = null
         var guid = ""
+        var author = ""
+        var mediaUrl: String? = null
+        var mediaType: String? = null
+        var duration: String? = null
 
         var eventType = parser.next()
         while (!(eventType == XmlPullParser.END_TAG && parser.name?.lowercase(Locale.ROOT) == "item")) {
@@ -102,6 +106,8 @@ object RssXmlParser {
                     "title" -> title = readText(parser)
                     "link" -> link = readText(parser)
                     "guid" -> guid = readText(parser)
+                    "author", "dc:creator", "creator" -> author = cleanAuthor(readText(parser))
+                    "itunes:duration", "duration" -> duration = readText(parser)
                     "description" -> {
                         val rawDesc = readText(parser)
                         description = stripHtml(rawDesc)
@@ -118,16 +124,37 @@ object RssXmlParser {
                     }
                     "pubdate", "dc:date", "published", "updated" -> pubDateStr = readText(parser)
                     "enclosure" -> {
-                        val type = parser.getAttributeValue(null, "type")
-                        if (type != null && type.startsWith("image")) {
-                            val url = parser.getAttributeValue(null, "url")
-                            if (!url.isNullOrBlank()) imageUrl = url
+                        val type = parser.getAttributeValue(null, "type")?.lowercase(Locale.ROOT) ?: ""
+                        val url = parser.getAttributeValue(null, "url") ?: ""
+                        if (url.isNotBlank()) {
+                            if (type.startsWith("image")) {
+                                if (imageUrl == null) imageUrl = url
+                            } else if (type.startsWith("video") || url.endsWith(".mp4") || url.endsWith(".m4v") || url.endsWith(".webm") || url.contains("youtube.com") || url.contains("youtu.be")) {
+                                mediaUrl = url
+                                mediaType = "VIDEO"
+                            } else if (type.startsWith("audio") || url.endsWith(".mp3") || url.endsWith(".m4a") || url.endsWith(".ogg") || url.endsWith(".wav")) {
+                                if (mediaUrl == null) {
+                                    mediaUrl = url
+                                    mediaType = "AUDIO"
+                                }
+                            }
                         }
                     }
                     "media:content", "media:thumbnail" -> {
-                        val url = parser.getAttributeValue(null, "url")
-                        if (!url.isNullOrBlank()) {
-                            imageUrl = url
+                        val type = parser.getAttributeValue(null, "type")?.lowercase(Locale.ROOT) ?: ""
+                        val url = parser.getAttributeValue(null, "url") ?: ""
+                        if (url.isNotBlank()) {
+                            if (type.startsWith("video") || url.endsWith(".mp4") || url.endsWith(".m4v") || url.contains("youtube.com")) {
+                                mediaUrl = url
+                                mediaType = "VIDEO"
+                            } else if (type.startsWith("image") || tagName == "media:thumbnail") {
+                                if (imageUrl == null) imageUrl = url
+                            } else if (type.startsWith("audio")) {
+                                if (mediaUrl == null) {
+                                    mediaUrl = url
+                                    mediaType = "AUDIO"
+                                }
+                            }
                         }
                     }
                 }
@@ -142,6 +169,15 @@ object RssXmlParser {
         val finalLink = link.ifBlank { guid }
         val cleanDesc = description.ifBlank { content.take(200) }
         val timestamp = parsePubDate(pubDateStr)
+        val analyzedSubcat = com.example.data.model.SubcategoryAnalyzer.analyze(title, cleanDesc, category)
+
+        // Determine if Video Podcast or Audio Podcast
+        val isVideo = mediaType == "VIDEO" || finalLink.contains("youtube.com/watch") || finalLink.contains("youtu.be") || finalLink.endsWith(".mp4") || finalLink.endsWith(".m4v")
+        val isAudio = mediaType == "AUDIO" || finalLink.endsWith(".mp3") || finalLink.endsWith(".m4a")
+        val isPodcastItem = category.equals("PODCASTS", ignoreCase = true) || isVideo || isAudio || !mediaUrl.isNullOrBlank() || !duration.isNullOrBlank()
+
+        val finalMediaUrl = mediaUrl ?: if (isVideo || isAudio) finalLink else null
+        val finalMediaType = if (isVideo) "VIDEO" else if (isAudio) "AUDIO" else mediaType
 
         return ArticleEntity(
             id = articleId,
@@ -155,11 +191,18 @@ object RssXmlParser {
             pubDate = formatTimestamp(timestamp),
             pubDateTimestamp = timestamp,
             imageUrl = imageUrl,
+            author = author,
             isBookmarked = false,
             isRead = false,
             isDeal = false,
             isPreferredSource = isPreferredSource,
-            storyClusterHash = ""
+            storyClusterHash = "",
+            subcategory = analyzedSubcat,
+            mediaUrl = finalMediaUrl,
+            mediaType = finalMediaType,
+            isPodcast = isPodcastItem,
+            isVideoPodcast = isVideo,
+            duration = duration
         )
     }
 
@@ -213,6 +256,7 @@ object RssXmlParser {
         var updated = ""
         var id = ""
         var imageUrl: String? = null
+        var author = ""
 
         var eventType = parser.next()
         while (!(eventType == XmlPullParser.END_TAG && parser.name?.lowercase(Locale.ROOT) == "entry")) {
@@ -221,6 +265,7 @@ object RssXmlParser {
                 when (tagName) {
                     "title" -> title = readText(parser)
                     "id" -> id = readText(parser)
+                    "author", "dc:creator", "creator" -> author = cleanAuthor(readText(parser))
                     "link" -> {
                         val rel = parser.getAttributeValue(null, "rel")
                         val href = parser.getAttributeValue(null, "href")
@@ -249,6 +294,13 @@ object RssXmlParser {
 
         val articleId = id.ifBlank { link.ifBlank { "$feedUrl#${title.hashCode()}" } }
         val timestamp = parsePubDate(updated)
+        val cleanDesc = summary.ifBlank { content.take(200) }.trim()
+        val analyzedSubcat = com.example.data.model.SubcategoryAnalyzer.analyze(title, cleanDesc, category)
+
+        val isYouTube = link.contains("youtube.com") || link.contains("youtu.be") || feedUrl.contains("youtube.com")
+        val isVideo = isYouTube || link.endsWith(".mp4") || link.endsWith(".m4v")
+        val isAudio = link.endsWith(".mp3") || link.endsWith(".m4a")
+        val isPodcastItem = category.equals("PODCASTS", ignoreCase = true) || isVideo || isAudio
 
         return ArticleEntity(
             id = articleId,
@@ -256,18 +308,35 @@ object RssXmlParser {
             feedTitle = feedTitle,
             category = category,
             title = title.trim(),
-            description = summary.ifBlank { content.take(200) }.trim(),
+            description = cleanDesc,
             content = content.ifBlank { summary }.trim(),
             link = link.trim(),
             pubDate = formatTimestamp(timestamp),
             pubDateTimestamp = timestamp,
             imageUrl = imageUrl,
+            author = author,
             isBookmarked = false,
             isRead = false,
             isDeal = false,
             isPreferredSource = isPreferredSource,
-            storyClusterHash = ""
+            storyClusterHash = "",
+            subcategory = analyzedSubcat,
+            mediaUrl = if (isVideo || isAudio) link.trim() else null,
+            mediaType = if (isVideo) "VIDEO" else if (isAudio) "AUDIO" else null,
+            isPodcast = isPodcastItem,
+            isVideoPodcast = isVideo
         )
+    }
+
+    private fun cleanAuthor(raw: String): String {
+        val stripped = stripHtml(raw).trim()
+        val matchParen = Regex("""\(([^)]+)\)""").find(stripped)
+        if (matchParen != null) {
+            val extracted = matchParen.groupValues[1].trim()
+            if (extracted.isNotBlank()) return extracted
+        }
+        val noEmail = stripped.replace(Regex("""[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"""), "").trim()
+        return noEmail.ifBlank { stripped }
     }
 
     private fun readText(parser: XmlPullParser): String {
