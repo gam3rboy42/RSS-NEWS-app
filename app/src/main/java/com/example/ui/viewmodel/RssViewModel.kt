@@ -405,10 +405,7 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
             checkOnlineStatus()
             com.example.util.PodcastCacheManager.autoPruneIfNecessary(getApplication(), db.rssDao())
             refreshPodcastStorageStats()
-            val articleCount = repository.getArticleCount()
-            if (articleCount == 0) {
-                refreshNews()
-            }
+            refreshNews()
         }
     }
 

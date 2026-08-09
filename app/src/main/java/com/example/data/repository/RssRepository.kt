@@ -16,15 +16,23 @@ import com.example.data.model.StoryCluster
 import com.example.data.model.StoryClusterer
 import com.example.data.parser.RssXmlParser
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import okhttp3.Cache
+import okhttp3.ConnectionPool
+import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import com.example.data.model.FeedCategoryAutoTagger
-import kotlinx.coroutines.flow.first
 import java.util.concurrent.TimeUnit
 
 sealed class SyncState {
@@ -39,8 +47,19 @@ class RssRepository(
     private val rssDao: RssDao
 ) {
     private val okHttpClient = OkHttpClient.Builder()
-        .connectTimeout(12, TimeUnit.SECONDS)
-        .readTimeout(12, TimeUnit.SECONDS)
+        .connectTimeout(6, TimeUnit.SECONDS)
+        .readTimeout(8, TimeUnit.SECONDS)
+        .writeTimeout(8, TimeUnit.SECONDS)
+        .connectionPool(ConnectionPool(8, 5, TimeUnit.MINUTES))
+        .dispatcher(Dispatcher().apply {
+            maxRequests = 16
+            maxRequestsPerHost = 6
+        })
+        .cache(try {
+            Cache(context.cacheDir.resolve("rss_http_cache"), 10L * 1024L * 1024L)
+        } catch (_: Exception) {
+            null
+        })
         .followRedirects(true)
         .build()
 
@@ -60,10 +79,23 @@ class RssRepository(
 
     suspend fun initializeDefaultsIfNeeded() {
         withContext(Dispatchers.IO) {
-            val existingCount = rssDao.getAllFeedsList().size
-            if (existingCount == 0) {
+            val existingFeeds = rssDao.getAllFeedsList()
+            if (existingFeeds.isEmpty()) {
                 val defaultFeeds = DefaultFeedCatalog.toDefaultEntities()
                 rssDao.insertDefaultFeeds(defaultFeeds)
+            } else if (existingFeeds.none { it.category.equals("PODCASTS", ignoreCase = true) }) {
+                val podcastDefaults = DefaultFeedCatalog.curatedPodcastFeeds.map { item ->
+                    FeedEntity(
+                        url = item.url,
+                        title = item.title,
+                        category = item.category,
+                        description = item.description,
+                        isPreferred = item.isDefaultPreferred,
+                        isEnabled = true,
+                        isCustom = false
+                    )
+                }
+                rssDao.insertDefaultFeeds(podcastDefaults)
             }
         }
     }
@@ -80,6 +112,52 @@ class RssRepository(
         return true
     }
 
+    private data class SingleFeedFetchResult(
+        val articles: List<ArticleEntity>,
+        val updatedIconUrl: Pair<String, String>? = null
+    )
+
+    private fun fetchSingleFeed(feed: FeedEntity): SingleFeedFetchResult {
+        try {
+            val request = Request.Builder()
+                .url(feed.url)
+                .header("User-Agent", "Mozilla/5.0 (Android; Nothing RSS News Reader)")
+                .build()
+
+            val response = okHttpClient.newCall(request).execute()
+            response.use { resp ->
+                if (resp.isSuccessful && resp.body != null) {
+                    val parsed = RssXmlParser.parse(
+                        inputStream = resp.body!!.byteStream(),
+                        feedUrl = feed.url,
+                        defaultCategory = feed.category,
+                        defaultFeedTitle = feed.title,
+                        isPreferredSource = feed.isPreferred
+                    )
+
+                    var updatedIcon: Pair<String, String>? = null
+                    var currentFeedIcon = feed.iconUrl
+                    if (parsed.iconUrl.isNotBlank() && currentFeedIcon.isBlank()) {
+                        currentFeedIcon = parsed.iconUrl
+                        updatedIcon = Pair(feed.url, currentFeedIcon)
+                    }
+
+                    val processed = DealDetector.processArticles(parsed.articles).map { article ->
+                        if (article.imageUrl.isNullOrBlank() && currentFeedIcon.isNotBlank()) {
+                            article.copy(imageUrl = currentFeedIcon)
+                        } else {
+                            article
+                        }
+                    }
+                    return SingleFeedFetchResult(processed, updatedIcon)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("RssRepository", "Error fetching feed ${feed.url}: ${e.localizedMessage}")
+        }
+        return SingleFeedFetchResult(emptyList())
+    }
+
     suspend fun refreshFeeds(): SyncState = withContext(Dispatchers.IO) {
         // Ensure default feeds are inserted if DB is completely empty
         initializeDefaultsIfNeeded()
@@ -90,45 +168,23 @@ class RssRepository(
                 return@withContext SyncState.Success(0)
             }
 
-            var totalArticlesFetched = 0
-            val newArticles = mutableListOf<ArticleEntity>()
-
-            for (feed in enabledFeeds) {
-                try {
-                    val request = Request.Builder()
-                        .url(feed.url)
-                        .header("User-Agent", "Mozilla/5.0 (Android; Nothing RSS News Reader)")
-                        .build()
-
-                    val response = okHttpClient.newCall(request).execute()
-                    if (response.isSuccessful && response.body != null) {
-                        val parsed = RssXmlParser.parse(
-                            inputStream = response.body!!.byteStream(),
-                            feedUrl = feed.url,
-                            defaultCategory = feed.category,
-                            defaultFeedTitle = feed.title,
-                            isPreferredSource = feed.isPreferred
-                        )
-
-                        var currentFeedIcon = feed.iconUrl
-                        if (parsed.iconUrl.isNotBlank() && currentFeedIcon.isBlank()) {
-                            currentFeedIcon = parsed.iconUrl
-                            rssDao.updateFeedIconUrl(feed.url, currentFeedIcon)
+            // Fetch feeds concurrently with max 6 parallel network calls
+            val semaphore = Semaphore(6)
+            val feedResults = coroutineScope {
+                enabledFeeds.map { feed ->
+                    async(Dispatchers.IO) {
+                        semaphore.withPermit {
+                            fetchSingleFeed(feed)
                         }
-
-                        val processed = DealDetector.processArticles(parsed.articles).map { article ->
-                            if (article.imageUrl.isNullOrBlank() && currentFeedIcon.isNotBlank()) {
-                                article.copy(imageUrl = currentFeedIcon)
-                            } else {
-                                article
-                            }
-                        }
-                        newArticles.addAll(processed)
-                        totalArticlesFetched += processed.size
                     }
-                } catch (e: Exception) {
-                    Log.e("RssRepository", "Error fetching feed ${feed.url}: ${e.localizedMessage}")
-                }
+                }.awaitAll()
+            }
+
+            val newArticles = feedResults.flatMap { it.articles }
+            val iconUpdates = feedResults.mapNotNull { it.updatedIconUrl }
+
+            for ((feedUrl, iconUrl) in iconUpdates) {
+                rssDao.updateFeedIconUrl(feedUrl, iconUrl)
             }
 
             if (newArticles.isNotEmpty()) {
@@ -150,7 +206,7 @@ class RssRepository(
             // Generate topic recommendations from liked stories if online
             generateDiscoveredRecommendationsInternal()
 
-            SyncState.Success(totalArticlesFetched)
+            SyncState.Success(newArticles.size)
         } catch (e: Exception) {
             SyncState.Error(e.localizedMessage ?: "Failed to update feeds")
         }
@@ -191,43 +247,47 @@ class RssRepository(
             val candidateFeeds = DefaultFeedCatalog.curatedFeeds.filter { catalogItem ->
                 !activeFeedUrls.contains(catalogItem.url) &&
                         (likedCategories.contains(catalogItem.category.uppercase()) || likedCategories.contains("ALL"))
-            }.take(5)
+            }.take(3)
 
             if (candidateFeeds.isEmpty()) return
 
-            val recommendedArticles = mutableListOf<ArticleEntity>()
+            val semaphore = Semaphore(3)
+            val recommendedArticles = coroutineScope {
+                candidateFeeds.map { candidate ->
+                    async(Dispatchers.IO) {
+                        semaphore.withPermit {
+                            try {
+                                val request = Request.Builder()
+                                    .url(candidate.url)
+                                    .header("User-Agent", "Mozilla/5.0 (Android; Nothing RSS News Reader)")
+                                    .build()
 
-            for (candidate in candidateFeeds) {
-                try {
-                    val request = Request.Builder()
-                        .url(candidate.url)
-                        .header("User-Agent", "Mozilla/5.0 (Android; Nothing RSS News Reader)")
-                        .build()
+                                val response = okHttpClient.newCall(request).execute()
+                                response.use { resp ->
+                                    if (resp.isSuccessful && resp.body != null) {
+                                        val parsed = RssXmlParser.parse(
+                                            inputStream = resp.body!!.byteStream(),
+                                            feedUrl = candidate.url,
+                                            defaultCategory = candidate.category,
+                                            defaultFeedTitle = candidate.title,
+                                            isPreferredSource = false
+                                        )
 
-                    val response = okHttpClient.newCall(request).execute()
-                    if (response.isSuccessful && response.body != null) {
-                        val parsed = RssXmlParser.parse(
-                            inputStream = response.body!!.byteStream(),
-                            feedUrl = candidate.url,
-                            defaultCategory = candidate.category,
-                            defaultFeedTitle = candidate.title,
-                            isPreferredSource = false
-                        )
-
-                        // Filter candidate articles that match liked authors or keywords
-                        val matching = parsed.articles.filter { article ->
-                            val authorMatch = likedAuthors.isNotEmpty() && article.author.isNotBlank() &&
-                                    likedAuthors.any { la -> article.author.lowercase().contains(la) }
-                            val artText = (article.title + " " + article.description).lowercase()
-                            val keywordMatch = likedKeywords.any { kw -> artText.contains(kw) }
-                            authorMatch || keywordMatch
-                        }.take(3).map { it.copy(isDiscoveredRecommendation = true) }
-
-                        recommendedArticles.addAll(matching)
+                                        parsed.articles.filter { article ->
+                                            val authorMatch = likedAuthors.isNotEmpty() && article.author.isNotBlank() &&
+                                                    likedAuthors.any { la -> article.author.lowercase().contains(la) }
+                                            val artText = (article.title + " " + article.description).lowercase()
+                                            val keywordMatch = likedKeywords.any { kw -> artText.contains(kw) }
+                                            authorMatch || keywordMatch
+                                        }.take(3).map { it.copy(isDiscoveredRecommendation = true) }
+                                    } else emptyList()
+                                }
+                            } catch (e: Exception) {
+                                emptyList()
+                            }
+                        }
                     }
-                } catch (e: Exception) {
-                    Log.e("RssRepository", "Recommendation fetch warning for ${candidate.url}: ${e.localizedMessage}")
-                }
+                }.awaitAll().flatten()
             }
 
             if (recommendedArticles.isNotEmpty()) {

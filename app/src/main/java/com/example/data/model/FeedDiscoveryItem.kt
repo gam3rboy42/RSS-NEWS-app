@@ -24,7 +24,7 @@ object DefaultFeedCatalog {
         get() = curatedFeeds.filter { it.isPodcast || it.category.equals("PODCASTS", ignoreCase = true) }
 
     fun toDefaultEntities(): List<FeedEntity> {
-        return curatedNewsFeeds.map { item ->
+        return curatedFeeds.map { item ->
             FeedEntity(
                 url = item.url,
                 title = item.title,
@@ -58,22 +58,22 @@ object DefaultFeedCatalog {
             isVideoPodcast = true
         ),
         FeedDiscoveryItem(
-            title = "NASA TWAN Video Podcast",
-            url = "https://www.nasa.gov/rss/dyn/TWAN_vodcast.rss",
+            title = "Daily Tech News Show",
+            url = "https://dailytechnewsshow.com/feed/podcast/",
             category = "PODCASTS",
-            description = "🎥 Video Podcast: This Week at NASA video show featuring space missions and rocket launches.",
+            description = "🎧 Audio Podcast: Daily essential tech news and analysis.",
             isDefaultPreferred = false,
             isPodcast = true,
-            isVideoPodcast = true
+            isVideoPodcast = false
         ),
         FeedDiscoveryItem(
-            title = "IGN Video Shows",
-            url = "https://feeds.feedburner.com/ign/video-podcasts",
+            title = "Darknet Diaries",
+            url = "https://podcast.darknetdiaries.com/",
             category = "PODCASTS",
-            description = "🎥 Video Podcast: Gaming reviews, gameplay video podcasts, and news roundups from IGN.",
+            description = "🎧 Audio Podcast: True stories from the dark side of the internet.",
             isDefaultPreferred = false,
             isPodcast = true,
-            isVideoPodcast = true
+            isVideoPodcast = false
         ),
         FeedDiscoveryItem(
             title = "The Vergecast",
@@ -94,10 +94,10 @@ object DefaultFeedCatalog {
             isVideoPodcast = false
         ),
         FeedDiscoveryItem(
-            title = "Giant Bombcast",
-            url = "https://www.giantbomb.com/podcast-xml/giant-bombcast",
+            title = "Huberman Lab",
+            url = "https://feeds.megaphone.fm/hubermanlab",
             category = "PODCASTS",
-            description = "🎧 Audio Podcast: Weekly gaming discussions, developer interviews, and video game banter.",
+            description = "🎧 Audio Podcast: Neuroscience, health, science, and human performance.",
             isDefaultPreferred = false,
             isPodcast = true,
             isVideoPodcast = false

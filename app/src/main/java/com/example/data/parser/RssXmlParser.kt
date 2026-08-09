@@ -1,5 +1,6 @@
 package com.example.data.parser
 
+import android.util.Log
 import android.util.Xml
 import com.example.data.local.ArticleEntity
 import org.xmlpull.v1.XmlPullParser
@@ -19,24 +20,29 @@ data class ParsedFeed(
 object RssXmlParser {
 
     fun parse(inputStream: InputStream, feedUrl: String, defaultCategory: String, defaultFeedTitle: String, isPreferredSource: Boolean): ParsedFeed {
-        inputStream.use { stream ->
-            val parser: XmlPullParser = Xml.newPullParser()
-            parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
-            parser.setInput(stream, null)
+        return try {
+            inputStream.use { stream ->
+                val parser: XmlPullParser = Xml.newPullParser()
+                parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
+                parser.setInput(stream, null)
 
-            var eventType = parser.eventType
-            while (eventType != XmlPullParser.END_DOCUMENT) {
-                if (eventType == XmlPullParser.START_TAG) {
-                    val tagName = parser.name?.lowercase(Locale.ROOT)
-                    if (tagName == "rss" || tagName == "channel") {
-                        return parseRss2(parser, feedUrl, defaultCategory, defaultFeedTitle, isPreferredSource)
-                    } else if (tagName == "feed") {
-                        return parseAtom(parser, feedUrl, defaultCategory, defaultFeedTitle, isPreferredSource)
+                var eventType = parser.eventType
+                while (eventType != XmlPullParser.END_DOCUMENT) {
+                    if (eventType == XmlPullParser.START_TAG) {
+                        val name = parser.name?.lowercase(Locale.ROOT) ?: ""
+                        if (name == "rss" || name == "channel") {
+                            return parseRss2(parser, feedUrl, defaultCategory, defaultFeedTitle, isPreferredSource)
+                        } else if (name == "feed") {
+                            return parseAtom(parser, feedUrl, defaultCategory, defaultFeedTitle, isPreferredSource)
+                        }
                     }
+                    eventType = parser.next()
                 }
-                eventType = parser.next()
+                ParsedFeed(defaultFeedTitle, "", emptyList())
             }
-            return ParsedFeed(defaultFeedTitle, "", emptyList())
+        } catch (e: Exception) {
+            Log.w("RssXmlParser", "XML Parsing error for $feedUrl: ${e.localizedMessage}")
+            ParsedFeed(defaultFeedTitle, "", emptyList())
         }
     }
 
@@ -56,22 +62,21 @@ object RssXmlParser {
         while (eventType != XmlPullParser.END_DOCUMENT) {
             if (eventType == XmlPullParser.START_TAG) {
                 val name = parser.name?.lowercase(Locale.ROOT) ?: ""
-                when (name) {
-                    "title" -> if (feedTitle.isEmpty() || feedTitle == "Feed" || feedTitle == defaultFeedTitle) {
+                when {
+                    name == "title" -> if (feedTitle.isEmpty() || feedTitle == "Feed" || feedTitle == defaultFeedTitle) {
                         val parsedTitle = readText(parser)
                         if (parsedTitle.isNotBlank()) feedTitle = parsedTitle
                     }
-                    "description" -> if (feedDescription.isEmpty()) {
+                    name == "description" -> if (feedDescription.isEmpty()) {
                         feedDescription = stripHtml(readText(parser))
                     }
-                    "itunes:image" -> {
+                    name == "itunes:image" -> {
                         val href = parser.getAttributeValue(null, "href") ?: ""
                         if (href.isNotBlank() && feedIconUrl.isEmpty()) {
                             feedIconUrl = href
                         }
                     }
-                    "image" -> {
-                        // Channel level image tag
+                    name == "image" -> {
                         if (feedIconUrl.isEmpty()) {
                             val href = parser.getAttributeValue(null, "href") ?: ""
                             if (href.isNotBlank()) {
@@ -79,7 +84,7 @@ object RssXmlParser {
                             }
                         }
                     }
-                    "item" -> {
+                    name == "item" -> {
                         val article = readRssItem(parser, feedUrl, defaultCategory, feedTitle.ifEmpty { defaultFeedTitle }, isPreferredSource)
                         if (article != null) {
                             articles.add(article)
@@ -121,67 +126,76 @@ object RssXmlParser {
         while (!(eventType == XmlPullParser.END_TAG && parser.name?.lowercase(Locale.ROOT) == "item")) {
             if (eventType == XmlPullParser.START_TAG) {
                 val tagName = parser.name?.lowercase(Locale.ROOT) ?: ""
-                when (tagName) {
-                    "title" -> title = readText(parser)
-                    "link" -> link = readText(parser)
-                    "guid" -> guid = readText(parser)
-                    "author", "dc:creator", "creator" -> author = cleanAuthor(readText(parser))
-                    "itunes:duration", "duration" -> duration = readText(parser)
-                    "itunes:image" -> {
+                when {
+                    tagName == "title" -> title = readText(parser)
+                    tagName == "link" -> {
+                        val text = readText(parser)
+                        if (text.isNotBlank()) link = text
+                    }
+                    tagName == "guid" -> guid = readText(parser)
+                    tagName == "author" || tagName == "dc:creator" || tagName == "creator" -> author = cleanAuthor(readText(parser))
+                    tagName == "itunes:duration" || tagName == "duration" -> duration = readText(parser)
+                    tagName == "itunes:image" -> {
                         val href = parser.getAttributeValue(null, "href") ?: ""
                         if (href.isNotBlank() && imageUrl == null) {
                             imageUrl = href
                         }
+                        skipTag(parser)
                     }
-                    "description" -> {
+                    tagName == "description" -> {
                         val rawDesc = readText(parser)
                         description = stripHtml(rawDesc)
                         if (imageUrl == null) {
                             imageUrl = extractImageFromHtml(rawDesc)
                         }
                     }
-                    "content:encoded", "content" -> {
+                    tagName == "content:encoded" || tagName == "content" -> {
                         val rawContent = readText(parser)
                         content = stripHtml(rawContent)
                         if (imageUrl == null) {
                             imageUrl = extractImageFromHtml(rawContent)
                         }
                     }
-                    "pubdate", "dc:date", "published", "updated" -> pubDateStr = readText(parser)
-                    "enclosure" -> {
+                    tagName == "pubdate" || tagName == "dc:date" || tagName == "published" || tagName == "updated" -> pubDateStr = readText(parser)
+                    tagName == "enclosure" -> {
                         val type = parser.getAttributeValue(null, "type")?.lowercase(Locale.ROOT) ?: ""
                         val url = parser.getAttributeValue(null, "url") ?: ""
                         if (url.isNotBlank()) {
+                            val lowerUrl = url.lowercase(Locale.ROOT)
                             if (type.startsWith("image")) {
                                 if (imageUrl == null) imageUrl = url
-                            } else if (type.startsWith("video") || url.endsWith(".mp4") || url.endsWith(".m4v") || url.endsWith(".webm") || url.contains("youtube.com") || url.contains("youtu.be")) {
+                            } else if (type.startsWith("video") || lowerUrl.contains(".mp4") || lowerUrl.contains(".m4v") || lowerUrl.contains(".webm") || lowerUrl.contains("youtube.com") || lowerUrl.contains("youtu.be")) {
                                 mediaUrl = url
                                 mediaType = "VIDEO"
-                            } else if (type.startsWith("audio") || url.endsWith(".mp3") || url.endsWith(".m4a") || url.endsWith(".ogg") || url.endsWith(".wav")) {
+                            } else if (type.startsWith("audio") || lowerUrl.contains(".mp3") || lowerUrl.contains(".m4a") || lowerUrl.contains(".ogg") || lowerUrl.contains(".wav")) {
                                 if (mediaUrl == null) {
                                     mediaUrl = url
                                     mediaType = "AUDIO"
                                 }
                             }
                         }
+                        skipTag(parser)
                     }
-                    "media:content", "media:thumbnail" -> {
+                    tagName == "media:content" || tagName == "media:thumbnail" -> {
                         val type = parser.getAttributeValue(null, "type")?.lowercase(Locale.ROOT) ?: ""
                         val url = parser.getAttributeValue(null, "url") ?: ""
                         if (url.isNotBlank()) {
-                            if (type.startsWith("video") || url.endsWith(".mp4") || url.endsWith(".m4v") || url.contains("youtube.com")) {
+                            val lowerUrl = url.lowercase(Locale.ROOT)
+                            if (type.startsWith("video") || lowerUrl.contains(".mp4") || lowerUrl.contains(".m4v") || lowerUrl.contains("youtube.com")) {
                                 mediaUrl = url
                                 mediaType = "VIDEO"
                             } else if (type.startsWith("image") || tagName == "media:thumbnail") {
                                 if (imageUrl == null) imageUrl = url
-                            } else if (type.startsWith("audio")) {
+                            } else if (type.startsWith("audio") || lowerUrl.contains(".mp3") || lowerUrl.contains(".m4a")) {
                                 if (mediaUrl == null) {
                                     mediaUrl = url
                                     mediaType = "AUDIO"
                                 }
                             }
                         }
+                        skipTag(parser)
                     }
+                    else -> skipTag(parser)
                 }
             }
             if (eventType == XmlPullParser.END_DOCUMENT) break
@@ -196,9 +210,9 @@ object RssXmlParser {
         val timestamp = parsePubDate(pubDateStr)
         val analyzedSubcat = com.example.data.model.SubcategoryAnalyzer.analyze(title, cleanDesc, category)
 
-        // Determine if Video Podcast or Audio Podcast
-        val isVideo = mediaType == "VIDEO" || finalLink.contains("youtube.com/watch") || finalLink.contains("youtu.be") || finalLink.endsWith(".mp4") || finalLink.endsWith(".m4v")
-        val isAudio = mediaType == "AUDIO" || finalLink.endsWith(".mp3") || finalLink.endsWith(".m4a")
+        val lowerLink = finalLink.lowercase(Locale.ROOT)
+        val isVideo = mediaType == "VIDEO" || lowerLink.contains("youtube.com/watch") || lowerLink.contains("youtu.be") || lowerLink.contains(".mp4") || lowerLink.contains(".m4v")
+        val isAudio = mediaType == "AUDIO" || lowerLink.contains(".mp3") || lowerLink.contains(".m4a")
         val isPodcastItem = category.equals("PODCASTS", ignoreCase = true) || isVideo || isAudio || mediaType == "AUDIO" || mediaType == "VIDEO" || !duration.isNullOrBlank()
 
         val finalMediaUrl = mediaUrl ?: if (isVideo || isAudio) finalLink else null
@@ -287,37 +301,40 @@ object RssXmlParser {
         while (!(eventType == XmlPullParser.END_TAG && parser.name?.lowercase(Locale.ROOT) == "entry")) {
             if (eventType == XmlPullParser.START_TAG) {
                 val tagName = parser.name?.lowercase(Locale.ROOT) ?: ""
-                when (tagName) {
-                    "title" -> title = readText(parser)
-                    "id" -> id = readText(parser)
-                    "author", "dc:creator", "creator" -> author = cleanAuthor(readText(parser))
-                    "link" -> {
+                when {
+                    tagName == "title" -> title = readText(parser)
+                    tagName == "id" -> id = readText(parser)
+                    tagName == "author" || tagName == "dc:creator" || tagName == "creator" -> author = cleanAuthor(readText(parser))
+                    tagName == "link" -> {
                         val rel = parser.getAttributeValue(null, "rel")
                         val href = parser.getAttributeValue(null, "href")
                         if (rel == null || rel == "alternate") {
                             if (!href.isNullOrBlank()) link = href
                         }
+                        skipTag(parser)
                     }
-                    "summary" -> {
+                    tagName == "summary" -> {
                         val raw = readText(parser)
                         summary = stripHtml(raw)
                         if (imageUrl == null) imageUrl = extractImageFromHtml(raw)
                     }
-                    "content" -> {
+                    tagName == "content" -> {
                         val raw = readText(parser)
                         content = stripHtml(raw)
                         if (imageUrl == null) imageUrl = extractImageFromHtml(raw)
                     }
-                    "updated", "published" -> updated = readText(parser)
+                    tagName == "updated" || tagName == "published" -> updated = readText(parser)
+                    else -> skipTag(parser)
                 }
             }
             if (eventType == XmlPullParser.END_DOCUMENT) break
             eventType = parser.next()
         }
 
-        if (title.isBlank()) return null
+        if (title.isBlank() && link.isBlank()) return null
 
         val articleId = id.ifBlank { link.ifBlank { "$feedUrl#${title.hashCode()}" } }
+        val finalLink = link.ifBlank { id }
         val timestamp = parsePubDate(updated)
         val cleanDesc = summary.ifBlank { content.take(200) }.trim()
         val analyzedSubcat = com.example.data.model.SubcategoryAnalyzer.analyze(title, cleanDesc, category)
@@ -353,62 +370,103 @@ object RssXmlParser {
         )
     }
 
+    private val REGEX_HTML_TAGS = Regex("<[^>]*>")
+    private val REGEX_NBSP = Regex("&nbsp;")
+    private val REGEX_AMP = Regex("&amp;")
+    private val REGEX_LT = Regex("&lt;")
+    private val REGEX_GT = Regex("&gt;")
+    private val REGEX_QUOT = Regex("&quot;")
+    private val REGEX_APOS = Regex("&#39;|&#8217;")
+    private val REGEX_MULTI_SPACE = Regex("\\s+")
+    private val REGEX_IMG_SRC = Regex("""<img[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+    private val REGEX_EMAIL = Regex("""[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}""")
+    private val REGEX_PAREN_CONTENT = Regex("""\(([^)]+)\)""")
+
+    private val DATE_FORMAT_STRINGS = arrayOf(
+        "EEE, dd MMM yyyy HH:mm:ss z",
+        "EEE, dd MMM yyyy HH:mm:ss Z",
+        "EEE, dd MMM yyyy HH:mm z",
+        "yyyy-MM-dd'T'HH:mm:ss'Z'",
+        "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+        "yyyy-MM-dd'T'HH:mm:ssXXX",
+        "yyyy-MM-dd HH:mm:ss"
+    )
+
+    private val THREAD_LOCAL_FORMATS = ThreadLocal.withInitial {
+        DATE_FORMAT_STRINGS.map { fmt ->
+            SimpleDateFormat(fmt, Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+            }
+        }
+    }
+
     private fun cleanAuthor(raw: String): String {
         val stripped = stripHtml(raw).trim()
-        val matchParen = Regex("""\(([^)]+)\)""").find(stripped)
+        val matchParen = REGEX_PAREN_CONTENT.find(stripped)
         if (matchParen != null) {
             val extracted = matchParen.groupValues[1].trim()
             if (extracted.isNotBlank()) return extracted
         }
-        val noEmail = stripped.replace(Regex("""[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"""), "").trim()
+        val noEmail = stripped.replace(REGEX_EMAIL, "").trim()
         return noEmail.ifBlank { stripped }
     }
 
     private fun readText(parser: XmlPullParser): String {
         val sb = StringBuilder()
-        var eventType = parser.next()
-        while (eventType == XmlPullParser.TEXT || eventType == XmlPullParser.CDSECT) {
-            sb.append(parser.text)
-            eventType = parser.next()
+        var depth = 1
+        while (depth > 0) {
+            when (parser.next()) {
+                XmlPullParser.START_TAG -> depth++
+                XmlPullParser.END_TAG -> depth--
+                XmlPullParser.TEXT, XmlPullParser.CDSECT -> {
+                    sb.append(parser.text)
+                }
+                XmlPullParser.END_DOCUMENT -> break
+            }
         }
         return sb.toString().trim()
     }
 
+    private fun skipTag(parser: XmlPullParser) {
+        if (parser.eventType != XmlPullParser.START_TAG) return
+        var depth = 1
+        while (depth > 0) {
+            when (parser.next()) {
+                XmlPullParser.START_TAG -> depth++
+                XmlPullParser.END_TAG -> depth--
+                XmlPullParser.END_DOCUMENT -> break
+            }
+        }
+    }
+
     private fun stripHtml(html: String): String {
-        return html.replace(Regex("<[^>]*>"), " ")
-            .replace(Regex("&nbsp;"), " ")
-            .replace(Regex("&amp;"), "&")
-            .replace(Regex("&lt;"), "<")
-            .replace(Regex("&gt;"), ">")
-            .replace(Regex("&quot;"), "\"")
-            .replace(Regex("&#39;"), "'")
-            .replace(Regex("\\s+"), " ")
+        if (html.isBlank()) return ""
+        if (!html.contains('<') && !html.contains('&')) return html.trim()
+
+        return html.replace(REGEX_HTML_TAGS, " ")
+            .replace(REGEX_NBSP, " ")
+            .replace(REGEX_AMP, "&")
+            .replace(REGEX_LT, "<")
+            .replace(REGEX_GT, ">")
+            .replace(REGEX_QUOT, "\"")
+            .replace(REGEX_APOS, "'")
+            .replace(REGEX_MULTI_SPACE, " ")
             .trim()
     }
 
     private fun extractImageFromHtml(html: String): String? {
-        val match = Regex("""<img[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(html)
+        if (html.isBlank() || !html.contains("<img", ignoreCase = true)) return null
+        val match = REGEX_IMG_SRC.find(html)
         return match?.groupValues?.get(1)
     }
 
     private fun parsePubDate(dateStr: String): Long {
         if (dateStr.isBlank()) return System.currentTimeMillis()
-
-        val formats = arrayOf(
-            "EEE, dd MMM yyyy HH:mm:ss z",
-            "EEE, dd MMM yyyy HH:mm:ss Z",
-            "EEE, dd MMM yyyy HH:mm z",
-            "yyyy-MM-dd'T'HH:mm:ss'Z'",
-            "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
-            "yyyy-MM-dd'T'HH:mm:ssXXX",
-            "yyyy-MM-dd HH:mm:ss"
-        )
-
-        for (format in formats) {
+        val cleanDateStr = dateStr.trim()
+        val formatters = THREAD_LOCAL_FORMATS.get()
+        for (sdf in formatters) {
             try {
-                val sdf = SimpleDateFormat(format, Locale.US)
-                sdf.timeZone = TimeZone.getTimeZone("UTC")
-                val date = sdf.parse(dateStr)
+                val date = sdf.parse(cleanDateStr)
                 if (date != null) return date.time
             } catch (_: Exception) {
             }

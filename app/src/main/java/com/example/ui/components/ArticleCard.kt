@@ -56,6 +56,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -180,7 +182,16 @@ fun ArticleCard(
                     color = if (primaryArticle.isDiscoveredRecommendation) NothingRed else if (isStacked) NothingRed.copy(alpha = 0.8f) else NothingBorder,
                     shape = RoundedCornerShape(6.dp)
                 )
-                .clickable { onArticleClick(primaryArticle) }
+                .pointerInput(primaryArticle.id, isPodcastEpisode) {
+                    detectTapGestures(
+                        onTap = { onArticleClick(primaryArticle) },
+                        onLongPress = {
+                            if (isPodcastEpisode && onDeleteFeed != null) {
+                                showConfirmDeleteFeedDialog = true
+                            }
+                        }
+                    )
+                }
                 .padding(14.dp)
         ) {
             Column {

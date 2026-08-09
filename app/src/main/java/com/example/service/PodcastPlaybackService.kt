@@ -210,7 +210,8 @@ class PodcastPlaybackService : Service(), AudioManager.OnAudioFocusChangeListene
                 var responseCode = connection.responseCode
                 if (responseCode == HttpURLConnection.HTTP_BAD_METHOD || responseCode == HttpURLConnection.HTTP_FORBIDDEN || responseCode == 405) {
                     connection.disconnect()
-                    connection = url.openConnection() as HttpURLConnection
+                    val urlGet = URL(urlString)
+                    connection = urlGet.openConnection() as HttpURLConnection
                     connection.requestMethod = "GET"
                     connection.connectTimeout = 6000
                     connection.readTimeout = 6000

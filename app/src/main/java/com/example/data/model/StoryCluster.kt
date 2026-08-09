@@ -41,6 +41,9 @@ object StoryClusterer {
         "video", "photos", "watch", "daily", "week", "year", "news", "guide", "here"
     )
 
+    private val NON_ALPHANUM_REGEX = Regex("""[^a-z0-9\s]""")
+    private val WHITESPACE_REGEX = Regex("""\s+""")
+
     fun clusterArticles(
         articles: List<ArticleEntity>,
         timeRangeFilter: TimeRangeFilter = TimeRangeFilter.ONE_WEEK,
@@ -70,6 +73,11 @@ object StoryClusterer {
             articles
         }
 
+        // Pre-compute word sets for all articles to avoid O(N^2) repeated string parsing and regex compilation
+        val wordSets = articlesToCluster.associate { article ->
+            article.id to extractSignificantWords(article.title)
+        }
+
         val clusters = mutableListOf<MutableList<ArticleEntity>>()
 
         for (article in articlesToCluster) {
@@ -78,14 +86,14 @@ object StoryClusterer {
                 continue
             }
 
-            val articleWords = extractSignificantWords(article.title)
+            val articleWords = wordSets[article.id] ?: emptySet()
             var matchedCluster: MutableList<ArticleEntity>? = null
 
             for (cluster in clusters) {
                 val representative = cluster.first()
                 if (representative.isDecoupled) continue
 
-                val repWords = extractSignificantWords(representative.title)
+                val repWords = wordSets[representative.id] ?: emptySet()
                 
                 val commonWords = articleWords.intersect(repWords)
                 val unionSize = articleWords.union(repWords).size
@@ -158,8 +166,8 @@ object StoryClusterer {
 
     private fun extractSignificantWords(title: String): Set<String> {
         return title.lowercase(Locale.ROOT)
-            .replace(Regex("""[^a-z0-9\s]"""), " ")
-            .split(Regex("""\s+"""))
+            .replace(NON_ALPHANUM_REGEX, " ")
+            .split(WHITESPACE_REGEX)
             .filter { word -> word.length > 2 && !stopWords.contains(word) }
             .toSet()
     }
