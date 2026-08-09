@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.DownloadForOffline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.ThumbDown
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.DownloadForOffline
@@ -40,11 +42,15 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -87,6 +93,42 @@ fun ArticleCard(
     val isStacked = cluster.isStacked
     val isRead = primaryArticle.isRead
     val secondaryArticles = remember(cluster.articles) { cluster.articles.filter { it.id != primaryArticle.id } }
+
+    val context = LocalContext.current
+    var effectiveImageUrl by remember(primaryArticle.id, primaryArticle.imageUrl) { mutableStateOf(primaryArticle.imageUrl) }
+    val isPodcastEpisode = primaryArticle.isPodcast || primaryArticle.isVideoPodcast || primaryArticle.mediaType == "AUDIO" || primaryArticle.mediaType == "VIDEO" || primaryArticle.category.equals("PODCASTS", ignoreCase = true)
+
+    LaunchedEffect(primaryArticle.id, primaryArticle.imageUrl, primaryArticle.feedUrl) {
+        if (effectiveImageUrl.isNullOrBlank()) {
+            withContext(Dispatchers.IO) {
+                try {
+                    val db = com.example.data.local.AppDatabase.getDatabase(context)
+                    val feed = db.rssDao().getFeedByUrl(primaryArticle.feedUrl)
+                    var resolved = feed?.iconUrl?.ifBlank { null }
+                    if (resolved.isNullOrBlank() && isPodcastEpisode) {
+                        resolved = com.example.util.PodcastMetadataGrabber.autoGrabBestThumbnail(
+                            feedTitle = primaryArticle.feedTitle,
+                            episodeTitle = primaryArticle.title,
+                            feedUrl = primaryArticle.feedUrl
+                        )
+                        if (!resolved.isNullOrBlank()) {
+                            db.rssDao().updateArticleImageUrl(primaryArticle.id, resolved)
+                            if (feed != null && feed.iconUrl.isBlank()) {
+                                db.rssDao().updateFeedIconUrl(primaryArticle.feedUrl, resolved)
+                            }
+                        }
+                    }
+                    if (!resolved.isNullOrBlank()) {
+                        withContext(Dispatchers.Main) {
+                            effectiveImageUrl = resolved
+                        }
+                    }
+                } catch (e: Exception) {
+                    // Ignore resolution errors
+                }
+            }
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -198,7 +240,8 @@ fun ArticleCard(
                     Row(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Unread Dot or Read Tag
+                        // Unread Dot or Read/Played Tag
+                        val isPodcastEpisode = primaryArticle.isPodcast || primaryArticle.isVideoPodcast || primaryArticle.mediaType == "AUDIO" || primaryArticle.mediaType == "VIDEO" || primaryArticle.category.equals("PODCASTS", ignoreCase = true)
                         if (!isRead) {
                             Box(
                                 modifier = Modifier
@@ -210,14 +253,16 @@ fun ArticleCard(
                         } else {
                             Box(
                                 modifier = Modifier
+                                    .testTag("played_marker_badge")
                                     .clip(RoundedCornerShape(2.dp))
-                                    .background(NothingSurfaceVariant)
-                                    .padding(horizontal = 4.dp, vertical = 1.dp)
+                                    .background(if (isPodcastEpisode) NothingRed.copy(alpha = 0.25f) else NothingSurfaceVariant)
+                                    .border(1.dp, if (isPodcastEpisode) NothingRed else NothingBorder, RoundedCornerShape(2.dp))
+                                    .padding(horizontal = 5.dp, vertical = 1.dp)
                             ) {
                                 Text(
-                                    text = "READ",
+                                    text = if (isPodcastEpisode) "✓ PLAYED" else "READ",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = NothingTextMuted,
+                                    color = if (isPodcastEpisode) NothingWhite else NothingTextMuted,
                                     fontSize = 8.sp,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -253,7 +298,7 @@ fun ArticleCard(
                             }
                         }
 
-                        if (primaryArticle.isPodcast || primaryArticle.isVideoPodcast || primaryArticle.mediaUrl != null) {
+                        if (primaryArticle.isPodcast || primaryArticle.isVideoPodcast || primaryArticle.mediaType == "AUDIO" || primaryArticle.mediaType == "VIDEO") {
                             Spacer(modifier = Modifier.width(6.dp))
                             val isVid = primaryArticle.isVideoPodcast || primaryArticle.mediaType == "VIDEO"
                             Box(
@@ -333,18 +378,56 @@ fun ArticleCard(
                         }
                     }
 
-                    // Thumbnail if available
-                    if (!primaryArticle.imageUrl.isNull_or_blank()) {
+                    // Thumbnail / Podcast Cover Box
+                    if (!effectiveImageUrl.isNullOrBlank() || isPodcastEpisode) {
                         Spacer(modifier = Modifier.width(10.dp))
-                        AsyncImage(
-                            model = primaryArticle.imageUrl,
-                            contentDescription = "Article image",
+                        Box(
                             modifier = Modifier
-                                .size(64.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .border(1.dp, NothingBorder, RoundedCornerShape(4.dp)),
-                            contentScale = ContentScale.Crop
-                        )
+                                .testTag("article_thumbnail_box")
+                                .size(72.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(NothingSurface)
+                                .border(
+                                    width = 1.dp,
+                                    color = if (isPodcastEpisode) NothingRed.copy(alpha = 0.6f) else NothingBorder,
+                                    shape = RoundedCornerShape(6.dp)
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (!effectiveImageUrl.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = effectiveImageUrl,
+                                    contentDescription = "Podcast cover artwork",
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clip(RoundedCornerShape(6.dp)),
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center,
+                                    modifier = Modifier.padding(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Headphones,
+                                        contentDescription = "Podcast",
+                                        tint = NothingRed,
+                                        modifier = Modifier.size(26.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = primaryArticle.feedTitle.ifBlank { "PODCAST" }.take(10).uppercase(),
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = NothingTextSecondary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -458,7 +541,7 @@ fun ArticleCard(
                         }
 
                         // Like Story Toggle Button
-                        if (primaryArticle.isPodcast || primaryArticle.isVideoPodcast || primaryArticle.mediaUrl != null) {
+                        if (primaryArticle.isPodcast || primaryArticle.isVideoPodcast || primaryArticle.mediaType == "AUDIO" || primaryArticle.mediaType == "VIDEO") {
                             val isVid = primaryArticle.isVideoPodcast || primaryArticle.mediaType == "VIDEO"
                             Box(
                                 modifier = Modifier

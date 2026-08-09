@@ -1,5 +1,6 @@
 package com.example
 
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -9,6 +10,7 @@ import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -22,11 +24,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import android.content.Intent
+import com.example.data.local.ArticleEntity
+import com.example.service.PodcastPlayerManager
+import com.example.ui.components.PodcastMediaDialog
+import com.example.ui.components.PodcastMiniPlayer
 import com.example.ui.navigation.NothingBottomBar
 import com.example.ui.navigation.ScreenRoute
 import com.example.ui.screens.ArticleDetailScreen
 import com.example.ui.screens.FeedDiscoveryScreen
 import com.example.ui.screens.FeedStreamScreen
+import com.example.ui.screens.PodcastFeedScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.theme.NothingBlack
 import com.example.ui.theme.NothingTheme
@@ -41,11 +48,19 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         handleNotificationIntent(intent)
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
+            }
+        }
+
         setContent {
             NothingTheme {
                 var routeBackStack by remember { mutableStateOf(listOf<ScreenRoute>(ScreenRoute.Stream)) }
                 val currentRoute = routeBackStack.lastOrNull() ?: ScreenRoute.Stream
                 val activeArticle by viewModel.selectedArticleForReading.collectAsState()
+                val playingPodcastArticle by PodcastPlayerManager.activeArticle.collectAsState()
+                var expandedPodcastArticle by remember { mutableStateOf<ArticleEntity?>(null) }
 
                 // Intercept back gesture when article reader is active
                 BackHandler(enabled = activeArticle != null) {
@@ -63,6 +78,12 @@ class MainActivity : ComponentActivity() {
                         viewModel.onlyBookmarks.value = true
                     }
 
+                    if (nextRoute == ScreenRoute.Podcasts) {
+                        viewModel.setCategory("PODCASTS")
+                    } else if (currentRoute == ScreenRoute.Podcasts && nextRoute != ScreenRoute.Podcasts) {
+                        viewModel.setCategory("ALL")
+                    }
+
                     routeBackStack = previousStack
                 }
 
@@ -73,25 +94,48 @@ class MainActivity : ComponentActivity() {
                         .statusBarsPadding(),
                     contentWindowInsets = WindowInsets(0, 0, 0, 0),
                     bottomBar = {
-                        if (activeArticle == null) {
-                            NothingBottomBar(
-                                currentRoute = currentRoute.route,
-                                onNavigate = { route ->
-                                    if (route == ScreenRoute.Bookmarks) {
-                                        viewModel.onlyBookmarks.value = true
-                                    } else if (currentRoute == ScreenRoute.Bookmarks) {
-                                        viewModel.onlyBookmarks.value = false
+                        Column {
+                            if (activeArticle == null && playingPodcastArticle != null) {
+                                PodcastMiniPlayer(
+                                    onExpandPlayer = {
+                                        expandedPodcastArticle = playingPodcastArticle
                                     }
-
-                                    if (route != currentRoute) {
-                                        if (route == ScreenRoute.Stream) {
-                                            routeBackStack = listOf(ScreenRoute.Stream)
+                                )
+                            }
+                            if (activeArticle == null) {
+                                NothingBottomBar(
+                                    currentRoute = currentRoute.route,
+                                    onNavigate = { route ->
+                                        if (route == ScreenRoute.Bookmarks) {
+                                            viewModel.onlyBookmarks.value = true
+                                            if (viewModel.selectedCategory.value == "PODCASTS") {
+                                                viewModel.setCategory("ALL")
+                                            }
+                                        } else if (route == ScreenRoute.Stream) {
+                                            viewModel.onlyBookmarks.value = false
+                                            if (viewModel.selectedCategory.value == "PODCASTS") {
+                                                viewModel.setCategory("ALL")
+                                            }
+                                        } else if (route == ScreenRoute.Podcasts) {
+                                            viewModel.onlyBookmarks.value = false
+                                            viewModel.setCategory("PODCASTS")
                                         } else {
-                                            routeBackStack = routeBackStack.filter { it != route } + route
+                                            viewModel.onlyBookmarks.value = false
+                                            if (viewModel.selectedCategory.value == "PODCASTS") {
+                                                viewModel.setCategory("ALL")
+                                            }
+                                        }
+
+                                        if (route != currentRoute) {
+                                            if (route == ScreenRoute.Stream) {
+                                                routeBackStack = listOf(ScreenRoute.Stream)
+                                            } else {
+                                                routeBackStack = routeBackStack.filter { it != route } + route
+                                            }
                                         }
                                     }
-                                }
-                            )
+                                )
+                            }
                         }
                     }
                 ) { innerPadding ->
@@ -113,26 +157,46 @@ class MainActivity : ComponentActivity() {
                                 label = "ScreenTransition"
                             ) { targetRoute ->
                                 when (targetRoute) {
-                                    ScreenRoute.Stream -> {
+                                    is ScreenRoute.Stream -> {
                                         FeedStreamScreen(
                                             viewModel = viewModel,
                                             onArticleClick = { /* Article set in ViewModel */ }
                                         )
                                     }
-                                    ScreenRoute.Discover -> {
+                                    is ScreenRoute.Podcasts -> {
+                                        PodcastFeedScreen(
+                                            viewModel = viewModel,
+                                            onNavigateToDiscover = {
+                                                routeBackStack = routeBackStack.filter { it != ScreenRoute.Discover } + ScreenRoute.Discover
+                                            }
+                                        )
+                                    }
+                                    is ScreenRoute.Discover -> {
                                         FeedDiscoveryScreen(viewModel = viewModel)
                                     }
-                                    ScreenRoute.Bookmarks -> {
+                                    is ScreenRoute.Bookmarks -> {
                                         FeedStreamScreen(
                                             viewModel = viewModel,
                                             onArticleClick = { /* Article set in ViewModel */ }
                                         )
                                     }
-                                    ScreenRoute.Settings -> {
+                                    is ScreenRoute.Settings -> {
                                         SettingsScreen(viewModel = viewModel)
                                     }
                                 }
                             }
+                        }
+
+                        // Expanded Podcast Media Overlay
+                        if (expandedPodcastArticle != null) {
+                            PodcastMediaDialog(
+                                article = expandedPodcastArticle!!,
+                                onDismiss = { expandedPodcastArticle = null },
+                                onOpenInBrowser = { url ->
+                                    val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                                    startActivity(intent)
+                                }
+                            )
                         }
                     }
                 }
@@ -150,6 +214,10 @@ class MainActivity : ComponentActivity() {
         intent?.let {
             val articleId = it.getStringExtra("EXTRA_ARTICLE_ID")
             val articleUrl = it.getStringExtra("EXTRA_ARTICLE_URL")
+            val isPodcast = it.getBooleanExtra("EXTRA_IS_PODCAST", false)
+            if (isPodcast) {
+                viewModel.setCategory("PODCASTS")
+            }
             if (!articleId.isNullOrBlank() || !articleUrl.isNullOrBlank()) {
                 viewModel.openArticleFromIntent(articleId, articleUrl)
             }

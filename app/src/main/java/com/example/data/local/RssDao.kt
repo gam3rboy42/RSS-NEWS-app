@@ -43,8 +43,17 @@ interface RssDao {
     @Query("UPDATE feeds SET title = :title, category = :category WHERE url = :url")
     suspend fun updateFeedDetails(url: String, title: String, category: String)
 
+    @Query("UPDATE feeds SET iconUrl = :iconUrl WHERE url = :url")
+    suspend fun updateFeedIconUrl(url: String, iconUrl: String)
+
     @Query("UPDATE articles SET feedUrl = :newUrl WHERE feedUrl = :oldUrl")
     suspend fun updateArticlesFeedUrl(oldUrl: String, newUrl: String)
+
+    @Query("UPDATE articles SET category = :category, isPodcast = :isPodcast WHERE feedUrl = :feedUrl")
+    suspend fun updateArticlesCategoryByFeedUrl(feedUrl: String, category: String, isPodcast: Boolean = true)
+
+    @Query("UPDATE articles SET category = :category, isPodcast = :isPodcast WHERE id = :id")
+    suspend fun updateArticleCategoryById(id: String, category: String, isPodcast: Boolean = true)
 
     @Query("DELETE FROM feeds WHERE url = :url")
     suspend fun deleteFeedByUrl(url: String)
@@ -86,6 +95,9 @@ interface RssDao {
     @Query("UPDATE articles SET isBookmarked = :isBookmarked WHERE id = :id")
     suspend fun updateBookmarkStatus(id: String, isBookmarked: Boolean)
 
+    @Query("UPDATE articles SET imageUrl = :imageUrl WHERE id = :id")
+    suspend fun updateArticleImageUrl(id: String, imageUrl: String?)
+
     @Query("UPDATE articles SET isSavedForOffline = :isSavedForOffline WHERE id = :id")
     suspend fun updateOfflineStatus(id: String, isSavedForOffline: Boolean)
 
@@ -115,6 +127,9 @@ interface RssDao {
 
     @Query("UPDATE articles SET isRead = 1 WHERE id = :id")
     suspend fun markArticleAsRead(id: String)
+
+    @Query("UPDATE articles SET isRead = :isRead WHERE id = :id")
+    suspend fun setArticleReadState(id: String, isRead: Boolean)
 
     @Query("UPDATE articles SET isRead = 0")
     suspend fun clearReadHistory()

@@ -20,11 +20,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.CompassCalibration
 import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Newspaper
 import androidx.compose.material.icons.filled.RssFeed
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.Explore
+import androidx.compose.material.icons.outlined.Headphones
 import androidx.compose.material.icons.outlined.Newspaper
 import androidx.compose.material.icons.outlined.RssFeed
 import androidx.compose.material.icons.outlined.Settings
@@ -55,6 +57,7 @@ fun NothingBottomBar(
 ) {
     val items = listOf(
         ScreenRoute.Stream,
+        ScreenRoute.Podcasts,
         ScreenRoute.Discover,
         ScreenRoute.Bookmarks,
         ScreenRoute.Settings
@@ -70,7 +73,7 @@ fun NothingBottomBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 8.dp, horizontal = 12.dp),
+                .padding(vertical = 6.dp, horizontal = 4.dp),
             horizontalArrangement = Arrangement.SpaceAround,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -79,6 +82,7 @@ fun NothingBottomBar(
 
                 val icon = when (item) {
                     ScreenRoute.Stream -> if (isSelected) Icons.Filled.Newspaper else Icons.Outlined.Newspaper
+                    ScreenRoute.Podcasts -> if (isSelected) Icons.Filled.Headphones else Icons.Outlined.Headphones
                     ScreenRoute.Discover -> if (isSelected) Icons.Filled.Explore else Icons.Outlined.Explore
                     ScreenRoute.Bookmarks -> if (isSelected) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder
                     ScreenRoute.Settings -> if (isSelected) Icons.Filled.RssFeed else Icons.Outlined.RssFeed
@@ -90,7 +94,7 @@ fun NothingBottomBar(
                         .clip(RoundedCornerShape(6.dp))
                         .background(if (isSelected) NothingRed else NothingBlack)
                         .clickable { onNavigate(item) }
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                        .padding(horizontal = 8.dp, vertical = 6.dp)
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -100,14 +104,14 @@ fun NothingBottomBar(
                             imageVector = icon,
                             contentDescription = item.label,
                             tint = if (isSelected) NothingWhite else NothingTextMuted,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(15.dp)
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
                         Text(
                             text = item.label,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            fontSize = 11.sp,
+                            fontSize = 10.sp,
                             color = if (isSelected) NothingWhite else NothingTextSecondary
                         )
                     }

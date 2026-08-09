@@ -12,7 +12,8 @@ import java.util.TimeZone
 data class ParsedFeed(
     val title: String,
     val description: String,
-    val articles: List<ArticleEntity>
+    val articles: List<ArticleEntity>,
+    val iconUrl: String = ""
 )
 
 object RssXmlParser {
@@ -48,18 +49,35 @@ object RssXmlParser {
     ): ParsedFeed {
         var feedTitle = defaultFeedTitle
         var feedDescription = ""
+        var feedIconUrl = ""
         val articles = mutableListOf<ArticleEntity>()
 
         var eventType = parser.eventType
         while (eventType != XmlPullParser.END_DOCUMENT) {
             if (eventType == XmlPullParser.START_TAG) {
-                when (parser.name?.lowercase(Locale.ROOT)) {
+                val name = parser.name?.lowercase(Locale.ROOT) ?: ""
+                when (name) {
                     "title" -> if (feedTitle.isEmpty() || feedTitle == "Feed" || feedTitle == defaultFeedTitle) {
                         val parsedTitle = readText(parser)
                         if (parsedTitle.isNotBlank()) feedTitle = parsedTitle
                     }
                     "description" -> if (feedDescription.isEmpty()) {
                         feedDescription = stripHtml(readText(parser))
+                    }
+                    "itunes:image" -> {
+                        val href = parser.getAttributeValue(null, "href") ?: ""
+                        if (href.isNotBlank() && feedIconUrl.isEmpty()) {
+                            feedIconUrl = href
+                        }
+                    }
+                    "image" -> {
+                        // Channel level image tag
+                        if (feedIconUrl.isEmpty()) {
+                            val href = parser.getAttributeValue(null, "href") ?: ""
+                            if (href.isNotBlank()) {
+                                feedIconUrl = href
+                            }
+                        }
                     }
                     "item" -> {
                         val article = readRssItem(parser, feedUrl, defaultCategory, feedTitle.ifEmpty { defaultFeedTitle }, isPreferredSource)
@@ -75,7 +93,8 @@ object RssXmlParser {
         return ParsedFeed(
             title = feedTitle.ifEmpty { defaultFeedTitle },
             description = feedDescription,
-            articles = articles
+            articles = articles,
+            iconUrl = feedIconUrl
         )
     }
 
@@ -108,6 +127,12 @@ object RssXmlParser {
                     "guid" -> guid = readText(parser)
                     "author", "dc:creator", "creator" -> author = cleanAuthor(readText(parser))
                     "itunes:duration", "duration" -> duration = readText(parser)
+                    "itunes:image" -> {
+                        val href = parser.getAttributeValue(null, "href") ?: ""
+                        if (href.isNotBlank() && imageUrl == null) {
+                            imageUrl = href
+                        }
+                    }
                     "description" -> {
                         val rawDesc = readText(parser)
                         description = stripHtml(rawDesc)
@@ -174,7 +199,7 @@ object RssXmlParser {
         // Determine if Video Podcast or Audio Podcast
         val isVideo = mediaType == "VIDEO" || finalLink.contains("youtube.com/watch") || finalLink.contains("youtu.be") || finalLink.endsWith(".mp4") || finalLink.endsWith(".m4v")
         val isAudio = mediaType == "AUDIO" || finalLink.endsWith(".mp3") || finalLink.endsWith(".m4a")
-        val isPodcastItem = category.equals("PODCASTS", ignoreCase = true) || isVideo || isAudio || !mediaUrl.isNullOrBlank() || !duration.isNullOrBlank()
+        val isPodcastItem = category.equals("PODCASTS", ignoreCase = true) || isVideo || isAudio || mediaType == "AUDIO" || mediaType == "VIDEO" || !duration.isNullOrBlank()
 
         val finalMediaUrl = mediaUrl ?: if (isVideo || isAudio) finalLink else null
         val finalMediaType = if (isVideo) "VIDEO" else if (isAudio) "AUDIO" else mediaType

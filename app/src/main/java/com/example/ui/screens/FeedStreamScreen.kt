@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -132,6 +133,12 @@ fun FeedStreamScreen(
                 podcastTypeFilter = podcastTypeFilter,
                 onSelectPodcastTypeFilter = { viewModel.setPodcastTypeFilter(it) }
             )
+        } else {
+            val savedSubMenuFilter by viewModel.savedSubMenuFilter.collectAsState()
+            SavedSubMenuBar(
+                selectedFilter = savedSubMenuFilter,
+                onSelectFilter = { viewModel.setSavedSubMenuFilter(it) }
+            )
         }
 
         // Search Bar
@@ -246,11 +253,18 @@ fun FeedStreamScreen(
                             tint = NothingTextMuted,
                             modifier = Modifier.size(48.dp)
                         )
+                        val savedSubFilter by viewModel.savedSubMenuFilter.collectAsState()
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(
-                            text = if (onlyBookmarks) "NO BOOKMARKED ARTICLES YET"
-                                   else if (onlyReadHistory) "NO READ ARTICLES IN HISTORY"
-                                   else "NO ARTICLES FOUND",
+                            text = if (onlyBookmarks) {
+                                when (savedSubFilter) {
+                                    "PODCASTS" -> "NO BOOKMARKED PODCASTS YET"
+                                    "DOWNLOADED" -> "NO DOWNLOADED PODCASTS OFFLINE"
+                                    "ARTICLES" -> "NO BOOKMARKED ARTICLES YET"
+                                    else -> "NO BOOKMARKED ITEMS YET"
+                                }
+                            } else if (onlyReadHistory) "NO READ ARTICLES IN HISTORY"
+                            else "NO ARTICLES FOUND",
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
                             color = NothingWhite,
@@ -258,10 +272,15 @@ fun FeedStreamScreen(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = if (onlyBookmarks) "Tap the bookmark icon on any story card to save it offline."
-                                   else if (onlyReadHistory) "Articles you open and read will automatically be recorded here in your Room database."
-                                   else if (hideDeals) "Deals are currently filtered out. Try toggling [ DEALS SHOWN ]."
-                                   else "Tap refresh or pull down to update feeds.",
+                            text = if (onlyBookmarks) {
+                                when (savedSubFilter) {
+                                    "DOWNLOADED" -> "Tap the download icon on any podcast card to save audio locally for offline playback without using mobile data."
+                                    "PODCASTS" -> "Tap the bookmark icon on any podcast episode to save it here."
+                                    else -> "Tap the bookmark icon on any story card to save it offline."
+                                }
+                            } else if (onlyReadHistory) "Articles you open and read will automatically be recorded here in your Room database."
+                            else if (hideDeals) "Deals are currently filtered out. Try toggling [ DEALS SHOWN ]."
+                            else "Tap refresh or pull down to update feeds.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = NothingTextMuted,
                             fontSize = 12.sp
@@ -411,5 +430,51 @@ fun FeedStreamScreen(
                 viewModel.decoupleCluster(cluster)
             }
         )
+    }
+}
+
+@Composable
+fun SavedSubMenuBar(
+    selectedFilter: String,
+    onSelectFilter: (String) -> Unit
+) {
+    val filters = listOf(
+        "ALL" to "[ 📑 ALL SAVED ]",
+        "ARTICLES" to "[ 📰 ARTICLES ]",
+        "PODCASTS" to "[ 🎧 PODCASTS ]"
+    )
+
+    LazyRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        items(filters) { (key, label) ->
+            val isSelected = (selectedFilter == key)
+            Box(
+                modifier = Modifier
+                    .testTag("saved_sub_menu_$key")
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(if (isSelected) NothingRed else NothingSurface)
+                    .border(
+                        width = 1.dp,
+                        color = if (isSelected) NothingRed else NothingBorder,
+                        shape = RoundedCornerShape(4.dp)
+                    )
+                    .clickable { onSelectFilter(key) }
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = if (isSelected) NothingWhite else NothingTextSecondary,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                )
+            }
+        }
     }
 }

@@ -53,19 +53,30 @@ import com.example.ui.theme.NothingWhite
 import androidx.compose.ui.platform.LocalContext
 import com.example.data.model.FeedCategoryAutoTagger
 
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
+import com.example.util.PodcastMetadataGrabber
+import kotlinx.coroutines.launch
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CategoryAssignDialog(
     feed: FeedEntity,
     availableCategories: List<String>,
     onDismiss: () -> Unit,
-    onSaveFeed: (newTitle: String, newUrl: String, newCategory: String) -> Unit,
+    onSaveFeed: (newTitle: String, newUrl: String, newCategory: String, newIconUrl: String) -> Unit,
     onSaveCategory: ((String) -> Unit)? = null
 ) {
     var editableTitle by remember { mutableStateOf(feed.title) }
     var editableUrl by remember { mutableStateOf(feed.url) }
+    var editableIconUrl by remember { mutableStateOf(feed.iconUrl) }
     var selectedFolder by remember { mutableStateOf(feed.category) }
     var customFolderName by remember { mutableStateOf("") }
+    val coroutineScope = rememberCoroutineScope()
+    var isGrabbingArtwork by remember { mutableStateOf(false) }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -300,6 +311,105 @@ fun CategoryAssignDialog(
                         .fillMaxWidth()
                 )
 
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Podcast/Feed Artwork URL Section
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "SHOW ART / COVER ICON URL:",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = NothingWhite,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(NothingSurface)
+                            .border(1.dp, NothingRed, RoundedCornerShape(4.dp))
+                            .clickable {
+                                isGrabbingArtwork = true
+                                coroutineScope.launch {
+                                    val grabbed = PodcastMetadataGrabber.autoGrabBestThumbnail(
+                                        editableTitle.ifBlank { feed.title },
+                                        "",
+                                        editableUrl.ifBlank { feed.url }
+                                    )
+                                    if (!grabbed.isNullOrBlank()) {
+                                        editableIconUrl = grabbed
+                                    }
+                                    isGrabbingArtwork = false
+                                }
+                            }
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = if (isGrabbingArtwork) "SEARCHING..." else "✨ AUTO GRAB ART",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = NothingRed
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(NothingSurface)
+                            .border(1.dp, NothingBorder, RoundedCornerShape(4.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (editableIconUrl.isNotBlank()) {
+                            AsyncImage(
+                                model = editableIconUrl,
+                                contentDescription = "Feed Icon",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.size(44.dp)
+                            )
+                        } else {
+                            Icon(Icons.Default.Image, contentDescription = null, tint = NothingTextMuted, modifier = Modifier.size(20.dp))
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    OutlinedTextField(
+                        value = editableIconUrl,
+                        onValueChange = { editableIconUrl = it },
+                        placeholder = {
+                            Text(
+                                "https://.../cover.jpg",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                color = NothingTextMuted
+                            )
+                        },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(
+                            color = NothingWhite,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp
+                        ),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = NothingRed,
+                            unfocusedBorderColor = NothingBorder,
+                            focusedContainerColor = NothingSurface,
+                            unfocusedContainerColor = NothingSurface
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(20.dp))
 
                 // Actions
@@ -332,7 +442,8 @@ fun CategoryAssignDialog(
                             onSaveFeed(
                                 editableTitle.ifBlank { feed.title },
                                 editableUrl.ifBlank { feed.url },
-                                finalCategory.ifBlank { feed.category }
+                                finalCategory.ifBlank { feed.category },
+                                editableIconUrl.trim()
                             )
                             onSaveCategory?.invoke(finalCategory)
                         },

@@ -99,6 +99,7 @@ fun SettingsScreen(viewModel: RssViewModel) {
     val mutedKeywords by viewModel.mutedKeywords.collectAsState()
     val mutedAuthors by viewModel.mutedAuthors.collectAsState()
     val mutedSubcategories by viewModel.mutedSubcategories.collectAsState()
+    val autoDownloadWifi by viewModel.autoDownloadWifi.collectAsState()
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -335,39 +336,79 @@ fun SettingsScreen(viewModel: RssViewModel) {
 
                         Spacer(modifier = Modifier.height(14.dp))
 
-                        // Test Notification Button
-                        Button(
-                            onClick = {
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                    permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                } else {
-                                    viewModel.sendTestNotification()
-                                }
-                            },
-                            shape = RoundedCornerShape(4.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = NothingSurface,
-                                contentColor = NothingWhite
-                            ),
-                            modifier = Modifier
-                                .testTag("send_test_notification_button")
-                                .fillMaxWidth()
-                                .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
+                        // Test Notification Buttons
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Default.Notifications,
-                                    contentDescription = "Test Notification",
-                                    tint = NothingRed,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "SEND TEST ARTICLE NOTIFICATION",
-                                    fontFamily = FontFamily.Monospace,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 11.sp
-                                )
+                            Button(
+                                onClick = {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                        permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    } else {
+                                        viewModel.sendTestNotification()
+                                    }
+                                },
+                                shape = RoundedCornerShape(4.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = NothingSurface,
+                                    contentColor = NothingWhite
+                                ),
+                                modifier = Modifier
+                                    .testTag("send_test_notification_button")
+                                    .weight(1f)
+                                    .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.Notifications,
+                                        contentDescription = "Test Notification",
+                                        tint = NothingRed,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "TEST NEWS ALERT",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            }
+
+                            Button(
+                                onClick = {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                        permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    } else {
+                                        viewModel.sendTestPodcastNotification()
+                                    }
+                                },
+                                shape = RoundedCornerShape(4.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = NothingSurface,
+                                    contentColor = NothingWhite
+                                ),
+                                modifier = Modifier
+                                    .testTag("send_test_podcast_notification_button")
+                                    .weight(1f)
+                                    .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.Notifications,
+                                        contentDescription = "Test Podcast Notification",
+                                        tint = NothingRed,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "TEST PODCAST ALERT",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp
+                                    )
+                                }
                             }
                         }
                     }
@@ -960,6 +1001,44 @@ fun SettingsScreen(viewModel: RssViewModel) {
 
                         Spacer(modifier = Modifier.height(12.dp))
 
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "AUTO-DOWNLOAD PODCASTS ON WI-FI",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    color = NothingWhite
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "Automatically download audio files for new episodes of preferred podcasts when connected to Wi-Fi",
+                                    fontSize = 10.sp,
+                                    color = NothingTextMuted
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Switch(
+                                checked = autoDownloadWifi,
+                                onCheckedChange = { viewModel.setAutoDownloadWifi(it) },
+                                modifier = Modifier.testTag("auto_download_wifi_switch"),
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = NothingWhite,
+                                    checkedTrackColor = NothingRed,
+                                    uncheckedThumbColor = NothingTextMuted,
+                                    uncheckedTrackColor = NothingSurface
+                                )
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
                         Button(
                             onClick = { viewModel.refreshNews() },
                             shape = RoundedCornerShape(4.dp),
@@ -1238,8 +1317,9 @@ fun SettingsScreen(viewModel: RssViewModel) {
             feed = editingFeedForFolder!!,
             availableCategories = availableCategories,
             onDismiss = { editingFeedForFolder = null },
-            onSaveFeed = { newTitle, newUrl, newCategory ->
+            onSaveFeed = { newTitle, newUrl, newCategory, newIconUrl ->
                 viewModel.updateFeedDetails(editingFeedForFolder!!, newTitle, newUrl, newCategory)
+                viewModel.updateFeedIconUrl(newUrl, newIconUrl)
                 editingFeedForFolder = null
             }
         )

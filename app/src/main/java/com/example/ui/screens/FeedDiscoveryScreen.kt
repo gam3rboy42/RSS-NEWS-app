@@ -27,6 +27,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
@@ -204,6 +206,8 @@ fun FeedDiscoveryScreen(viewModel: RssViewModel) {
             filteredUserFeeds.groupBy { it.category.ifBlank { "GENERAL" }.uppercase() }
         }
     }
+
+    val collapsedFolders = remember { androidx.compose.runtime.mutableStateMapOf<String, Boolean>() }
 
     val popularTopics = remember {
         listOf("Retro Gaming", "Formula 1", "AI Hardware", "SpaceX", "Linux Kernel", "Crypto", "Japanese Cooking")
@@ -790,7 +794,42 @@ fun FeedDiscoveryScreen(viewModel: RssViewModel) {
                     }
                 }
             } else {
+                item(key = "collapse_expand_all_btn", contentType = "header_card") {
+                    val allCollapsed = feedsGroupedByFolder.keys.all { collapsedFolders[it] == true }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 4.dp),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .testTag("toggle_all_folders_button")
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(NothingSurface)
+                                .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
+                                .clickable {
+                                    val targetState = !allCollapsed
+                                    feedsGroupedByFolder.keys.forEach { folderKey ->
+                                        collapsedFolders[folderKey] = targetState
+                                    }
+                                }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = if (allCollapsed) "▼ EXPAND ALL FOLDERS" else "▲ COLLAPSE ALL FOLDERS",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = NothingWhite
+                            )
+                        }
+                    }
+                }
+
                 feedsGroupedByFolder.forEach { (folderName, folderFeeds) ->
+                    val isCollapsed = collapsedFolders[folderName] ?: false
+
                     // Folder Header
                     item(key = "folder_hdr_$folderName", contentType = "folder_header") {
                         Box(
@@ -800,6 +839,10 @@ fun FeedDiscoveryScreen(viewModel: RssViewModel) {
                                 .clip(RoundedCornerShape(4.dp))
                                 .background(NothingSurface)
                                 .border(1.dp, NothingRed.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+                                .clickable {
+                                    collapsedFolders[folderName] = !isCollapsed
+                                }
+                                .testTag("toggle_folder_$folderName")
                                 .padding(horizontal = 12.dp, vertical = 8.dp)
                         ) {
                             Row(
@@ -808,6 +851,13 @@ fun FeedDiscoveryScreen(viewModel: RssViewModel) {
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = if (isCollapsed) Icons.Default.KeyboardArrowRight else Icons.Default.KeyboardArrowDown,
+                                        contentDescription = if (isCollapsed) "Expand Folder" else "Collapse Folder",
+                                        tint = NothingRed,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
                                     Icon(
                                         imageVector = Icons.Default.Folder,
                                         contentDescription = "Folder",
@@ -823,30 +873,42 @@ fun FeedDiscoveryScreen(viewModel: RssViewModel) {
                                         color = NothingWhite
                                     )
                                 }
-                                Text(
-                                    text = "${folderFeeds.size} ${if (folderFeeds.size == 1) "FEED" else "FEEDS"}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = NothingTextSecondary,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "${folderFeeds.size} ${if (folderFeeds.size == 1) "FEED" else "FEEDS"}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = NothingTextSecondary,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = if (isCollapsed) "[+] EDIT" else "[-]",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = NothingRed
+                                    )
+                                }
                             }
                         }
                     }
 
-                    // Feeds in Folder
-                    items(
-                        items = folderFeeds,
-                        key = { "user_${it.url}" },
-                        contentType = { "user_feed_card" }
-                    ) { userFeed ->
-                        UserFeedCard(
-                            userFeed = userFeed,
-                            onEditFolder = onEditFolder,
-                            onPreviewWeb = onPreviewWeb,
-                            onTogglePreferred = onTogglePreferred,
-                            onDeleteFeed = onDeleteFeed
-                        )
+                    // Feeds in Folder (only rendered if folder is expanded)
+                    if (!isCollapsed) {
+                        items(
+                            items = folderFeeds,
+                            key = { "user_${it.url}" },
+                            contentType = { "user_feed_card" }
+                        ) { userFeed ->
+                            UserFeedCard(
+                                userFeed = userFeed,
+                                onEditFolder = onEditFolder,
+                                onPreviewWeb = onPreviewWeb,
+                                onTogglePreferred = onTogglePreferred,
+                                onDeleteFeed = onDeleteFeed
+                            )
+                        }
                     }
                 }
             }
@@ -900,8 +962,9 @@ fun FeedDiscoveryScreen(viewModel: RssViewModel) {
             feed = editingFeedForFolder!!,
             availableCategories = availableCategories,
             onDismiss = { editingFeedForFolder = null },
-            onSaveFeed = { newTitle, newUrl, newCategory ->
+            onSaveFeed = { newTitle, newUrl, newCategory, newIconUrl ->
                 viewModel.updateFeedDetails(editingFeedForFolder!!, newTitle, newUrl, newCategory)
+                viewModel.updateFeedIconUrl(newUrl, newIconUrl)
                 editingFeedForFolder = null
             }
         )

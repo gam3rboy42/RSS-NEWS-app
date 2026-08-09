@@ -61,23 +61,53 @@ class RssBackgroundWorker(
                                 if (!exists) {
                                     rssDao.insertArticles(listOf(article))
 
-                                    val authorName = article.author.lowercase()
-                                    val isLikedAuthor = article.author.isNotBlank() && likedAuthors.any { la -> authorName.contains(la) }
+                                    val isPodcastItem = article.isPodcast || article.isVideoPodcast ||
+                                            article.mediaType == "AUDIO" || article.mediaType == "VIDEO" ||
+                                            article.category.equals("PODCASTS", ignoreCase = true)
 
-                                    // Priority 1: From liked author
-                                    if (isLikedAuthor) {
-                                        topSuggestedArticle = article
-                                        suggestionReason = "New story by author you liked: ${article.author}"
-                                    }
-                                    // Priority 2: From preferred source
-                                    else if (feed.isPreferred && topSuggestedArticle == null) {
-                                        topSuggestedArticle = article
-                                        suggestionReason = "New update from preferred feed: ${feed.title}"
-                                    }
-                                    // Priority 3: General fresh article
-                                    else if (topSuggestedArticle == null) {
-                                        topSuggestedArticle = article
-                                        suggestionReason = "Fresh story from ${feed.title}"
+                                    if (isPodcastItem && (feed.isPreferred || article.isPreferredSource)) {
+                                        var isAutoDownloaded = false
+                                        if (com.example.util.PodcastCacheManager.getAutoDownloadWifi(appContext) &&
+                                            com.example.util.PodcastCacheManager.isWifiConnected(appContext)) {
+                                            val downloadedFile = com.example.util.PodcastCacheManager.downloadPodcastAudio(appContext, article)
+                                            if (downloadedFile != null) {
+                                                rssDao.updateOfflineStatus(article.id, true)
+                                                com.example.util.PodcastCacheManager.autoPruneIfNecessary(appContext, rssDao)
+                                                isAutoDownloaded = true
+                                            }
+                                        }
+
+                                        val reason = if (isAutoDownloaded) {
+                                            "New episode auto-downloaded on Wi-Fi: ${feed.title.ifBlank { article.feedTitle }}"
+                                        } else {
+                                            "New episode on preferred podcast: ${feed.title.ifBlank { article.feedTitle }}"
+                                        }
+
+                                        // Send separate podcast notification on podcast channel!
+                                        NotificationHelper.showPodcastNotification(
+                                            context = appContext,
+                                            article = article,
+                                            reasonText = reason
+                                        )
+                                    } else if (!isPodcastItem) {
+                                        val authorName = article.author.lowercase()
+                                        val isLikedAuthor = article.author.isNotBlank() && likedAuthors.any { la -> authorName.contains(la) }
+
+                                        // Priority 1: From liked author
+                                        if (isLikedAuthor) {
+                                            topSuggestedArticle = article
+                                            suggestionReason = "New story by author you liked: ${article.author}"
+                                        }
+                                        // Priority 2: From preferred source
+                                        else if (feed.isPreferred && topSuggestedArticle == null) {
+                                            topSuggestedArticle = article
+                                            suggestionReason = "New update from preferred feed: ${feed.title}"
+                                        }
+                                        // Priority 3: General fresh article
+                                        else if (topSuggestedArticle == null) {
+                                            topSuggestedArticle = article
+                                            suggestionReason = "Fresh story from ${feed.title}"
+                                        }
                                     }
                                 }
                             }

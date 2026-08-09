@@ -317,7 +317,7 @@ fun ArticleDetailScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             // Podcast / Media Action Banner if applicable
-            if (article.isPodcast || article.isVideoPodcast || article.mediaUrl != null) {
+            if (article.isPodcast || article.isVideoPodcast || article.mediaType == "AUDIO" || article.mediaType == "VIDEO") {
                 val isVid = article.isVideoPodcast || article.mediaType == "VIDEO"
                 Box(
                     modifier = Modifier

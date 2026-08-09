@@ -110,7 +110,19 @@ class RssRepository(
                             isPreferredSource = feed.isPreferred
                         )
 
-                        val processed = DealDetector.processArticles(parsed.articles)
+                        var currentFeedIcon = feed.iconUrl
+                        if (parsed.iconUrl.isNotBlank() && currentFeedIcon.isBlank()) {
+                            currentFeedIcon = parsed.iconUrl
+                            rssDao.updateFeedIconUrl(feed.url, currentFeedIcon)
+                        }
+
+                        val processed = DealDetector.processArticles(parsed.articles).map { article ->
+                            if (article.imageUrl.isNullOrBlank() && currentFeedIcon.isNotBlank()) {
+                                article.copy(imageUrl = currentFeedIcon)
+                            } else {
+                                article
+                            }
+                        }
                         newArticles.addAll(processed)
                         totalArticlesFetched += processed.size
                     }
@@ -121,6 +133,18 @@ class RssRepository(
 
             if (newArticles.isNotEmpty()) {
                 rssDao.insertArticles(newArticles)
+
+                // Auto-download preferred podcast episodes on Wi-Fi
+                if (com.example.util.PodcastCacheManager.getAutoDownloadWifi(context) &&
+                    com.example.util.PodcastCacheManager.isWifiConnected(context)) {
+                    val preferredPodcasts = newArticles.filter { art ->
+                        (art.isPodcast || art.isVideoPodcast || art.mediaType == "AUDIO" || art.mediaType == "VIDEO" || art.category.equals("PODCASTS", ignoreCase = true)) &&
+                        art.isPreferredSource
+                    }
+                    for (pod in preferredPodcasts) {
+                        com.example.util.PodcastCacheManager.autoDownloadIfWifi(context, pod, rssDao)
+                    }
+                }
             }
 
             // Generate topic recommendations from liked stories if online
@@ -257,8 +281,19 @@ class RssRepository(
                 val normUrl = normalizeUrl(article.feedUrl)
                 // Must belong to an enabled feed, or allFeeds is empty, OR be a discovered recommendation
                 val isFeedEnabledOrRecommendation = allFeeds.isEmpty() || enabledUrlSet.contains(normUrl) || article.isDiscoveredRecommendation
-                // Category filter
-                val matchesCategory = categoryFilter == "ALL" || article.category.equals(categoryFilter, ignoreCase = true)
+                val isPodcastArticle = article.isPodcast ||
+                        article.isVideoPodcast ||
+                        article.category.equals("PODCASTS", ignoreCase = true) ||
+                        article.mediaType == "AUDIO" ||
+                        article.mediaType == "VIDEO"
+
+                // Category filter: separate podcasts from regular news stream
+                val matchesCategory = when {
+                    onlyBookmarks || onlyOffline || onlyReadHistory -> true
+                    categoryFilter == "ALL" -> !isPodcastArticle
+                    categoryFilter.equals("PODCASTS", ignoreCase = true) -> isPodcastArticle
+                    else -> article.category.equals(categoryFilter, ignoreCase = true) && !isPodcastArticle
+                }
                 // Hide deals filter
                 val matchesDeals = !hideDeals || !article.isDeal
                 // Preferred filter
@@ -431,6 +466,15 @@ class RssRepository(
         return withContext(Dispatchers.IO) {
             val likedList = rssDao.getLikedArticles()
             likedList.firstOrNull() ?: rssDao.getLatestArticle()
+        }
+    }
+
+    suspend fun getSamplePodcastForNotification(): ArticleEntity? {
+        return withContext(Dispatchers.IO) {
+            val allPodcasts = rssDao.getAllArticlesList().filter {
+                it.isPodcast || it.isVideoPodcast || it.mediaType == "AUDIO" || it.mediaType == "VIDEO" || it.category.equals("PODCASTS", ignoreCase = true)
+            }
+            allPodcasts.firstOrNull { it.isPreferredSource } ?: allPodcasts.firstOrNull()
         }
     }
 
@@ -763,5 +807,25 @@ class RssRepository(
             }
         }
         importedCount
+    }
+
+    suspend fun getAllFeedsList(): List<FeedEntity> = withContext(Dispatchers.IO) {
+        rssDao.getAllFeedsList()
+    }
+
+    suspend fun updateFeedIconUrl(feedUrl: String, iconUrl: String) = withContext(Dispatchers.IO) {
+        rssDao.updateFeedIconUrl(feedUrl, iconUrl)
+    }
+
+    suspend fun updateArticleImageUrl(articleId: String, imageUrl: String?) = withContext(Dispatchers.IO) {
+        rssDao.updateArticleImageUrl(articleId, imageUrl)
+    }
+
+    suspend fun searchArtworkCandidates(query: String): List<com.example.util.PodcastArtworkCandidate> = withContext(Dispatchers.IO) {
+        com.example.util.PodcastMetadataGrabber.searchArtworkCandidates(query)
+    }
+
+    suspend fun autoGrabPodcastArtwork(feedTitle: String, episodeTitle: String = "", feedUrl: String = ""): String? = withContext(Dispatchers.IO) {
+        com.example.util.PodcastMetadataGrabber.autoGrabBestThumbnail(feedTitle, episodeTitle, feedUrl)
     }
 }

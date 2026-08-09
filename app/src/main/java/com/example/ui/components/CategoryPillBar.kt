@@ -82,7 +82,8 @@ fun CategoryPillBar(
         listOf(
             "ALL" to "ALL PODCASTS",
             "AUDIO" to "🎧 AUDIO ONLY",
-            "VIDEO" to "🎥 VIDEO PODCASTS"
+            "VIDEO" to "🎥 VIDEO PODCASTS",
+            "DOWNLOADED" to "💾 DOWNLOADED"
         )
     }
     val timeFilterValues = remember { TimeRangeFilter.values() }
