@@ -31,13 +31,13 @@ object RssTopicSearchManager {
         FeedDiscoveryItem("NPR News", "https://feeds.npr.org/1001/rss.xml", "WORLD", "📰 Major News Publisher: National and international news coverage from NPR.")
     )
 
-    suspend fun searchFeedsForTopic(topic: String): List<FeedDiscoveryItem> = withContext(Dispatchers.IO) {
+    suspend fun searchNewsFeedsForTopic(topic: String): List<FeedDiscoveryItem> = withContext(Dispatchers.IO) {
         if (topic.isBlank()) return@withContext emptyList()
         val cleanedTopic = topic.trim()
         val results = mutableListOf<FeedDiscoveryItem>()
 
-        // 1. Check local catalog for direct keyword matches
-        val catalogMatches = DefaultFeedCatalog.curatedFeeds.filter { item ->
+        // 1. Check curated news catalog for direct keyword matches
+        val catalogMatches = DefaultFeedCatalog.curatedNewsFeeds.filter { item ->
             item.title.contains(cleanedTopic, ignoreCase = true) ||
             item.description.contains(cleanedTopic, ignoreCase = true) ||
             item.category.contains(cleanedTopic, ignoreCase = true)
@@ -108,15 +108,7 @@ object RssTopicSearchManager {
             )
         }
 
-        // 6. Query iTunes Podcast API for real podcast news/shows for this topic
-        try {
-            val podcastResults = queryItunesPodcasts(cleanedTopic)
-            results.addAll(podcastResults)
-        } catch (e: Exception) {
-            // Ignore podcast API errors
-        }
-
-        // 7. Query Gemini AI for specialized topic RSS news recommendations if API key exists
+        // 6. Query Gemini AI for specialized topic RSS news recommendations if API key exists
         val apiKey = BuildConfig.GEMINI_API_KEY
         if (apiKey.isNotBlank() && apiKey != "MY_GEMINI_API_KEY") {
             try {
@@ -127,9 +119,40 @@ object RssTopicSearchManager {
             }
         }
 
-        // Deduplicate results by URL
-        results.distinctBy { it.url.trim().lowercase(Locale.ROOT) }
+        // Deduplicate and filter out podcasts
+        results
+            .filter { !it.isPodcast && !it.category.equals("PODCASTS", ignoreCase = true) }
+            .distinctBy { it.url.trim().lowercase(Locale.ROOT) }
     }
+
+    suspend fun searchPodcastFeedsForTopic(topic: String): List<FeedDiscoveryItem> = withContext(Dispatchers.IO) {
+        if (topic.isBlank()) return@withContext emptyList()
+        val cleanedTopic = topic.trim()
+        val results = mutableListOf<FeedDiscoveryItem>()
+
+        // 1. Check curated podcast catalog
+        val curatedMatches = DefaultFeedCatalog.curatedPodcastFeeds.filter { item ->
+            item.title.contains(cleanedTopic, ignoreCase = true) ||
+            item.description.contains(cleanedTopic, ignoreCase = true) ||
+            item.category.contains(cleanedTopic, ignoreCase = true)
+        }
+        results.addAll(curatedMatches)
+
+        // 2. Query iTunes Podcast Search API for live podcast show results
+        try {
+            val podcastResults = queryItunesPodcasts(cleanedTopic)
+            results.addAll(podcastResults)
+        } catch (e: Exception) {
+            // Ignore podcast API errors
+        }
+
+        // Deduplicate and ensure only podcasts are returned
+        results
+            .filter { it.isPodcast || it.category.equals("PODCASTS", ignoreCase = true) }
+            .distinctBy { it.url.trim().lowercase(Locale.ROOT) }
+    }
+
+    suspend fun searchFeedsForTopic(topic: String): List<FeedDiscoveryItem> = searchNewsFeedsForTopic(topic)
 
     private fun probeWebsiteRssFeeds(inputUrlOrDomain: String): List<FeedDiscoveryItem> {
         val list = mutableListOf<FeedDiscoveryItem>()

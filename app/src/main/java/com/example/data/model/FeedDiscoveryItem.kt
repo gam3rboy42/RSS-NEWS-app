@@ -14,9 +14,30 @@ data class FeedDiscoveryItem(
 
 object DefaultFeedCatalog {
 
-    val categories = listOf("ALL", "TECH", "SCIENCE", "GAMING", "PODCASTS", "WORLD", "BUSINESS", "DESIGN", "AI")
+    val newsCategories = listOf("ALL", "TECH", "SCIENCE", "GAMING", "WORLD", "BUSINESS", "DESIGN", "AI")
+    val categories = listOf("ALL", "TECH", "SCIENCE", "GAMING", "WORLD", "BUSINESS", "DESIGN", "AI")
 
-    val curatedFeeds = listOf(
+    val curatedNewsFeeds by lazy {
+        curatedFeeds.filter { !it.isPodcast && !it.category.equals("PODCASTS", ignoreCase = true) }
+    }
+
+    val curatedPodcastFeeds by lazy {
+        curatedFeeds.filter { it.isPodcast || it.category.equals("PODCASTS", ignoreCase = true) }
+    }
+
+    fun toDefaultEntities(): List<FeedEntity> {
+        return curatedNewsFeeds.map { item ->
+            FeedEntity(
+                url = item.url,
+                title = item.title,
+                category = item.category,
+                description = item.description,
+                isPreferred = item.isDefaultPreferred,
+                isEnabled = true,
+                isCustom = false
+            )
+        }
+    }
         // PODCASTS (AUDIO & VIDEO)
         FeedDiscoveryItem(
             title = "TWiT HD Video Netcast",
@@ -244,18 +265,4 @@ object DefaultFeedCatalog {
             isDefaultPreferred = false
         )
     )
-
-    fun toDefaultEntities(): List<FeedEntity> {
-        return curatedFeeds.map { item ->
-            FeedEntity(
-                url = item.url,
-                title = item.title,
-                category = item.category,
-                description = item.description,
-                isPreferred = item.isDefaultPreferred,
-                isEnabled = true,
-                isCustom = false
-            )
-        }
-    }
 }

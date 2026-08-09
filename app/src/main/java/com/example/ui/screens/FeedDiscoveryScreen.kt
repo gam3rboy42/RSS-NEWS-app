@@ -174,7 +174,7 @@ fun FeedDiscoveryScreen(viewModel: RssViewModel) {
         derivedStateOf {
             val query = searchQuery.trim().lowercase()
             val isAllCat = discoveryCategory == "ALL" || discoveryCategory.isBlank()
-            DefaultFeedCatalog.curatedFeeds.filter { item ->
+            DefaultFeedCatalog.curatedNewsFeeds.filter { item ->
                 val matchesCategory = isAllCat || item.category.equals(discoveryCategory, ignoreCase = true)
                 if (!matchesCategory) return@filter false
                 if (query.isEmpty()) return@filter true

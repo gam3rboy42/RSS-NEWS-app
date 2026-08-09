@@ -54,12 +54,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.material3.TextButton
+import com.example.data.local.FeedEntity
 import com.example.data.local.ArticleEntity
 import com.example.ui.components.NothingHeader
 import com.example.ui.components.PodcastMediaDialog
 import com.example.ui.components.SwipeableArticleCard
 import com.example.ui.theme.NothingBlack
 import com.example.ui.theme.NothingBorder
+import com.example.ui.theme.NothingDarkGray
 import com.example.ui.theme.NothingRed
 import com.example.ui.theme.NothingSurface
 import com.example.ui.theme.NothingTextMuted
@@ -86,8 +91,10 @@ fun PodcastFeedScreen(
     }
 
     var activePodcastArticle by remember { mutableStateOf<ArticleEntity?>(null) }
+    var feedToDelete by remember { mutableStateOf<FeedEntity?>(null) }
     var showAddCategoryDialog by remember { mutableStateOf(false) }
     var newCategoryInput by remember { mutableStateOf("") }
+    var showDiscoverPanel by remember(podcastFeeds.size) { mutableStateOf(podcastFeeds.isEmpty()) }
 
     Column(
         modifier = Modifier
@@ -235,60 +242,100 @@ fun PodcastFeedScreen(
             }
         }
 
-        // Search Bar
-        Box(
+        // Search Bar & Discover Podcasts Toggle Button
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(NothingSurface)
-                .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
-                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(NothingSurface)
+                    .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Default.Search,
-                    contentDescription = "Search",
-                    tint = NothingTextMuted,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                if (searchQuery.isEmpty()) {
-                    Text(
-                        text = "SEARCH PODCAST SHOWS OR EPISODES...",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = NothingTextMuted
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = "Search",
+                        tint = NothingTextMuted,
+                        modifier = Modifier.size(16.dp)
                     )
-                }
-                BasicTextField(
-                    value = searchQuery,
-                    onValueChange = { viewModel.searchQuery.value = it },
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(
-                        color = NothingWhite,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp
-                    ),
-                    cursorBrush = SolidColor(NothingRed),
-                    modifier = Modifier
-                        .testTag("podcast_search_input")
-                        .weight(1f)
-                )
-                if (searchQuery.isNotEmpty()) {
-                    IconButton(
-                        onClick = { viewModel.searchQuery.value = "" },
-                        modifier = Modifier.size(20.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Clear search",
-                            tint = NothingTextMuted,
-                            modifier = Modifier.size(16.dp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    if (searchQuery.isEmpty()) {
+                        Text(
+                            text = "SEARCH PODCAST SHOWS...",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = NothingTextMuted
                         )
+                    }
+                    BasicTextField(
+                        value = searchQuery,
+                        onValueChange = { viewModel.searchQuery.value = it },
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(
+                            color = NothingWhite,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp
+                        ),
+                        cursorBrush = SolidColor(NothingRed),
+                        modifier = Modifier
+                            .testTag("podcast_search_input")
+                            .weight(1f)
+                    )
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(
+                            onClick = { viewModel.searchQuery.value = "" },
+                            modifier = Modifier.size(20.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Clear search",
+                                tint = NothingTextMuted,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                 }
             }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            Box(
+                modifier = Modifier
+                    .testTag("toggle_podcast_discover_panel_btn")
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(if (showDiscoverPanel) NothingRed else NothingSurface)
+                    .border(1.dp, NothingRed, RoundedCornerShape(4.dp))
+                    .clickable { showDiscoverPanel = !showDiscoverPanel }
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Explore,
+                        contentDescription = "Discover",
+                        tint = NothingWhite,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = if (showDiscoverPanel) "CLOSE DISCOVER" else "+ DISCOVER",
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 10.sp,
+                        color = NothingWhite
+                    )
+                }
+            }
+        }
+
+        if (showDiscoverPanel) {
+            PodcastDiscoverSection(
+                viewModel = viewModel,
+                onSubscribed = { showDiscoverPanel = false }
+            )
         }
 
         // Subscribed Podcast Shows Artwork Carousel
@@ -318,12 +365,19 @@ fun PodcastFeedScreen(
                             modifier = Modifier
                                 .testTag("podcast_show_chip_${feed.title.lowercase().replace(" ", "_")}")
                                 .width(68.dp)
-                                .clickable {
-                                    if (isSelected) {
-                                        viewModel.searchQuery.value = ""
-                                    } else {
-                                        viewModel.searchQuery.value = feed.title
-                                    }
+                                .pointerInput(feed.url) {
+                                    detectTapGestures(
+                                        onTap = {
+                                            if (isSelected) {
+                                                viewModel.searchQuery.value = ""
+                                            } else {
+                                                viewModel.searchQuery.value = feed.title
+                                            }
+                                        },
+                                        onLongPress = {
+                                            feedToDelete = feed
+                                        }
+                                    )
                                 }
                         ) {
                             Box(
@@ -477,6 +531,9 @@ fun PodcastFeedScreen(
                         onSubscribeFeed = { url, title, cat ->
                             viewModel.subscribeDiscoveredFeed(url, title, cat)
                         },
+                        onDeleteFeed = { url ->
+                            viewModel.deleteFeed(url)
+                        },
                         onArchive = { archivedCluster ->
                             viewModel.archiveCluster(archivedCluster)
                         },
@@ -567,5 +624,340 @@ fun PodcastFeedScreen(
                 viewModel.closeArticleReader()
             }
         )
+    }
+
+    // Delete Feed confirmation dialog (triggered via press-and-hold on show chip)
+    feedToDelete?.let { feed ->
+        AlertDialog(
+            onDismissRequest = { feedToDelete = null },
+            title = {
+                Text(
+                    text = "REMOVE PODCAST?",
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = NothingWhite
+                )
+            },
+            text = {
+                Text(
+                    text = "Are you sure you want to remove '${feed.title}' from your podcast feeds? All saved episodes will be deleted.",
+                    fontSize = 13.sp,
+                    color = NothingTextSecondary
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val urlToDelete = feed.url
+                        feedToDelete = null
+                        if (searchQuery.equals(feed.title, ignoreCase = true)) {
+                            viewModel.searchQuery.value = ""
+                        }
+                        viewModel.deleteFeed(urlToDelete)
+                    }
+                ) {
+                    Text(
+                        text = "REMOVE PODCAST",
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        color = NothingRed
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { feedToDelete = null }
+                ) {
+                    Text(
+                        text = "CANCEL",
+                        fontFamily = FontFamily.Monospace,
+                        color = NothingTextMuted
+                    )
+                }
+            },
+            containerColor = NothingDarkGray,
+            shape = RoundedCornerShape(8.dp)
+        )
+    }
+}
+
+@Composable
+fun PodcastDiscoverSection(
+    viewModel: RssViewModel,
+    onSubscribed: (String) -> Unit
+) {
+    val podcastSearchResults by viewModel.podcastSearchResults.collectAsState()
+    val isSearchingPodcasts by viewModel.isSearchingPodcasts.collectAsState()
+    val allFeeds by viewModel.allFeeds.collectAsState()
+
+    var topicInput by remember { mutableStateOf("") }
+    var resultMsg by remember { mutableStateOf<String?>(null) }
+
+    val subscribedUrls = remember(allFeeds) {
+        allFeeds.map { it.url.trim().lowercase().removeSuffix("/") }.toSet()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(NothingDarkGray)
+            .border(1.dp, NothingRed, RoundedCornerShape(6.dp))
+            .padding(14.dp)
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = "Search Podcasts",
+                        tint = NothingRed,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "PODCAST DISCOVERY & SEARCH",
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        color = NothingWhite
+                    )
+                }
+            }
+
+            Text(
+                text = "SEARCH AUDIO & VIDEO PODCAST SHOWS VIA ITUNES & RSS",
+                style = MaterialTheme.typography.labelSmall,
+                color = NothingTextMuted,
+                fontSize = 9.sp
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Search Input Row
+            Row(modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(
+                    value = topicInput,
+                    onValueChange = { topicInput = it },
+                    placeholder = {
+                        Text(
+                            "Search podcast name or topic...",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            color = NothingTextMuted
+                        )
+                    },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                        color = NothingWhite,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp
+                    ),
+                    colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = NothingRed,
+                        unfocusedBorderColor = NothingBorder,
+                        focusedContainerColor = NothingSurface,
+                        unfocusedContainerColor = NothingSurface
+                    ),
+                    modifier = Modifier
+                        .testTag("podcast_discover_input")
+                        .weight(1f)
+                )
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                Button(
+                    onClick = {
+                        if (topicInput.isNotBlank()) {
+                            viewModel.searchPodcastFeedsByTopic(topicInput.trim())
+                        }
+                    },
+                    enabled = topicInput.isNotBlank() && !isSearchingPodcasts,
+                    shape = RoundedCornerShape(4.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = NothingRed,
+                        contentColor = NothingWhite
+                    ),
+                    modifier = Modifier
+                        .testTag("search_podcast_button")
+                        .height(52.dp)
+                ) {
+                    Text(
+                        text = if (isSearchingPodcasts) "SEARCHING..." else "SEARCH",
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp
+                    )
+                }
+            }
+
+            if (resultMsg != null) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = resultMsg!!,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = NothingWhite
+                )
+            }
+
+            // Search Results or Curated Suggestions
+            if (isSearchingPodcasts) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "🔍 Searching podcast shows for '$topicInput'...",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    color = NothingRed
+                )
+            } else if (podcastSearchResults.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "FOUND ${podcastSearchResults.size} PODCAST SHOWS:",
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp,
+                    color = NothingWhite
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    podcastSearchResults.forEach { item ->
+                        val isSubscribed = subscribedUrls.contains(item.url.trim().lowercase().removeSuffix("/"))
+                        PodcastSearchResultCard(
+                            item = item,
+                            isSubscribed = isSubscribed,
+                            onSubscribe = { podItem ->
+                                viewModel.addCustomFeedUrl(
+                                    url = podItem.url,
+                                    title = podItem.title,
+                                    category = "PODCASTS"
+                                ) { success ->
+                                    if (success) {
+                                        resultMsg = "✔ Subscribed to '${podItem.title}'"
+                                        onSubscribed(podItem.title)
+                                    }
+                                }
+                            }
+                        )
+                    }
+                }
+            } else {
+                // Curated Podcast Shows Suggestions
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "FEATURED POPULAR PODCAST SHOWS:",
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp,
+                    color = NothingWhite
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    com.example.data.model.DefaultFeedCatalog.curatedPodcastFeeds.forEach { item ->
+                        val isSubscribed = subscribedUrls.contains(item.url.trim().lowercase().removeSuffix("/"))
+                        PodcastSearchResultCard(
+                            item = item,
+                            isSubscribed = isSubscribed,
+                            onSubscribe = { podItem ->
+                                viewModel.addCustomFeedUrl(
+                                    url = podItem.url,
+                                    title = podItem.title,
+                                    category = "PODCASTS"
+                                ) { success ->
+                                    if (success) {
+                                        resultMsg = "✔ Subscribed to '${podItem.title}'"
+                                        onSubscribed(podItem.title)
+                                    }
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PodcastSearchResultCard(
+    item: com.example.data.model.FeedDiscoveryItem,
+    isSubscribed: Boolean,
+    onSubscribe: (com.example.data.model.FeedDiscoveryItem) -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(4.dp))
+            .background(NothingSurface)
+            .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
+            .padding(10.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = if (item.isVideoPodcast) "🎥 VIDEO" else "🎧 AUDIO",
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 8.sp,
+                        color = NothingRed
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = item.title,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = NothingWhite,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = item.description,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = NothingTextMuted,
+                    fontSize = 10.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            Box(
+                modifier = Modifier
+                    .testTag("subscribe_podcast_${item.title.lowercase().replace(" ", "_")}")
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(if (isSubscribed) NothingSurface else NothingRed)
+                    .border(
+                        width = 1.dp,
+                        color = if (isSubscribed) NothingBorder else NothingRed,
+                        shape = RoundedCornerShape(4.dp)
+                    )
+                    .clickable(enabled = !isSubscribed) { onSubscribe(item) }
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
+            ) {
+                Text(
+                    text = if (isSubscribed) "✔ ADDED" else "+ SUBSCRIBE",
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 9.sp,
+                    color = if (isSubscribed) NothingTextMuted else NothingWhite
+                )
+            }
+        }
     }
 }

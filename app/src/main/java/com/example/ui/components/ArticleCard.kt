@@ -72,6 +72,9 @@ import com.example.ui.theme.NothingSurface
 import com.example.ui.theme.NothingSurfaceVariant
 import com.example.ui.theme.NothingTextMuted
 import com.example.ui.theme.NothingTextSecondary
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.filled.Close
 import com.example.ui.theme.NothingWhite
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -84,10 +87,12 @@ fun ArticleCard(
     onOfflineToggle: (String, Boolean) -> Unit = { _, _ -> },
     onLikeToggle: (String, Boolean) -> Unit = { _, _ -> },
     onDislikeToggle: (String, Boolean) -> Unit = { _, _ -> },
-    onSubscribeFeed: (String, String, String) -> Unit = { _, _, _ -> }
+    onSubscribeFeed: (String, String, String) -> Unit = { _, _, _ -> },
+    onDeleteFeed: ((String) -> Unit)? = null
 ) {
     var isExpanded by rememberSaveable(cluster.clusterId) { mutableStateOf(false) }
     var showPodcastMediaDialog by remember { mutableStateOf(false) }
+    var showConfirmDeleteFeedDialog by remember { mutableStateOf(false) }
 
     val primaryArticle = cluster.primaryArticle
     val isStacked = cluster.isStacked
@@ -240,45 +245,145 @@ fun ArticleCard(
                     Row(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Unread Dot or Read/Played Tag
+                        // Unread Dot or Read/Played / Remaining Time Tag
                         val isPodcastEpisode = primaryArticle.isPodcast || primaryArticle.isVideoPodcast || primaryArticle.mediaType == "AUDIO" || primaryArticle.mediaType == "VIDEO" || primaryArticle.category.equals("PODCASTS", ignoreCase = true)
-                        if (!isRead) {
-                            Box(
-                                modifier = Modifier
-                                    .size(6.dp)
-                                    .clip(CircleShape)
-                                    .background(NothingRed)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .testTag("played_marker_badge")
-                                    .clip(RoundedCornerShape(2.dp))
-                                    .background(if (isPodcastEpisode) NothingRed.copy(alpha = 0.25f) else NothingSurfaceVariant)
-                                    .border(1.dp, if (isPodcastEpisode) NothingRed else NothingBorder, RoundedCornerShape(2.dp))
-                                    .padding(horizontal = 5.dp, vertical = 1.dp)
-                            ) {
-                                Text(
-                                    text = if (isPodcastEpisode) "✓ PLAYED" else "READ",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (isPodcastEpisode) NothingWhite else NothingTextMuted,
-                                    fontSize = 8.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
+
+                        if (isPodcastEpisode) {
+                            val savedProgressMs = remember(primaryArticle.id) {
+                                com.example.util.PodcastProgressManager.getProgress(context, primaryArticle.id)
                             }
-                            Spacer(modifier = Modifier.width(6.dp))
+                            val savedDurationMs = remember(primaryArticle.id) {
+                                com.example.util.PodcastProgressManager.getDuration(context, primaryArticle.id)
+                            }
+                            val parsedDurMs = remember(primaryArticle.duration) {
+                                parseDurationStringToMs(primaryArticle.duration)
+                            }
+                            val totalDurMs = if (savedDurationMs > 0L) savedDurationMs else parsedDurMs
+
+                            if (isRead) {
+                                Box(
+                                    modifier = Modifier
+                                        .testTag("played_marker_badge_${primaryArticle.id}")
+                                        .clip(RoundedCornerShape(2.dp))
+                                        .background(NothingRed.copy(alpha = 0.25f))
+                                        .border(1.dp, NothingRed, RoundedCornerShape(2.dp))
+                                        .padding(horizontal = 5.dp, vertical = 1.dp)
+                                ) {
+                                    Text(
+                                        text = "✓ PLAYED",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = NothingWhite,
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(6.dp))
+                            } else if (savedProgressMs > 3000L) {
+                                val remainingMs = totalDurMs - savedProgressMs
+                                val badgeText = if (totalDurMs > savedProgressMs) {
+                                    "⏳ ${com.example.util.PodcastProgressManager.formatMs(remainingMs)} LEFT"
+                                } else {
+                                    "▶ ${com.example.util.PodcastProgressManager.formatMs(savedProgressMs)}"
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .testTag("podcast_remaining_badge_${primaryArticle.id}")
+                                        .clip(RoundedCornerShape(2.dp))
+                                        .background(NothingDarkGray)
+                                        .border(1.dp, NothingRed, RoundedCornerShape(2.dp))
+                                        .padding(horizontal = 5.dp, vertical = 1.dp)
+                                ) {
+                                    Text(
+                                        text = badgeText,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = NothingWhite,
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(6.dp))
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(NothingRed)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+
+                                if (!primaryArticle.duration.isNullOrBlank()) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(2.dp))
+                                            .background(NothingSurfaceVariant)
+                                            .padding(horizontal = 4.dp, vertical = 1.dp)
+                                    ) {
+                                        Text(
+                                            text = primaryArticle.duration!!,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = NothingTextMuted,
+                                            fontSize = 8.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                }
+                            }
+                        } else {
+                            if (!isRead) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(NothingRed)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .testTag("played_marker_badge")
+                                        .clip(RoundedCornerShape(2.dp))
+                                        .background(NothingSurfaceVariant)
+                                        .border(1.dp, NothingBorder, RoundedCornerShape(2.dp))
+                                        .padding(horizontal = 5.dp, vertical = 1.dp)
+                                ) {
+                                    Text(
+                                        text = "READ",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = NothingTextMuted,
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(6.dp))
+                            }
                         }
 
                         // Feed Title
-                        Text(
-                            text = primaryArticle.feedTitle.uppercase(),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = NothingTextSecondary,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = if (isPodcastEpisode && onDeleteFeed != null) {
+                                Modifier.clickable { showConfirmDeleteFeedDialog = true }
+                            } else Modifier
+                        ) {
+                            Text(
+                                text = primaryArticle.feedTitle.uppercase(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = NothingTextSecondary,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (isPodcastEpisode && onDeleteFeed != null) {
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Remove Podcast Feed",
+                                    tint = NothingTextMuted,
+                                    modifier = Modifier.size(10.dp)
+                                )
+                            }
+                        }
 
                         if (primaryArticle.isPreferredSource) {
                             Spacer(modifier = Modifier.width(6.dp))
@@ -807,6 +912,80 @@ fun ArticleCard(
             onDismiss = { showPodcastMediaDialog = false },
             onOpenInBrowser = { url -> onArticleClick(primaryArticle.copy(link = url)) }
         )
+    }
+
+    if (showConfirmDeleteFeedDialog) {
+        AlertDialog(
+            onDismissRequest = { showConfirmDeleteFeedDialog = false },
+            title = {
+                Text(
+                    text = "REMOVE PODCAST?",
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = NothingWhite
+                )
+            },
+            text = {
+                Text(
+                    text = "Are you sure you want to remove '${primaryArticle.feedTitle}' from your podcast feeds?",
+                    fontSize = 13.sp,
+                    color = NothingTextSecondary
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showConfirmDeleteFeedDialog = false
+                        onDeleteFeed?.invoke(primaryArticle.feedUrl)
+                    }
+                ) {
+                    Text(
+                        text = "REMOVE PODCAST",
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        color = NothingRed
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showConfirmDeleteFeedDialog = false }
+                ) {
+                    Text(
+                        text = "CANCEL",
+                        fontFamily = FontFamily.Monospace,
+                        color = NothingTextMuted
+                    )
+                }
+            },
+            containerColor = NothingDarkGray,
+            shape = RoundedCornerShape(8.dp)
+        )
+    }
+}
+
+fun parseDurationStringToMs(durationStr: String?): Long {
+    if (durationStr.isNullOrBlank()) return 0L
+    return try {
+        val parts = durationStr.split(":")
+        when (parts.size) {
+            1 -> parts[0].trim().toLongOrNull()?.times(1000L) ?: 0L
+            2 -> {
+                val min = parts[0].trim().toLongOrNull() ?: 0L
+                val sec = parts[1].trim().toLongOrNull() ?: 0L
+                (min * 60 + sec) * 1000L
+            }
+            3 -> {
+                val hr = parts[0].trim().toLongOrNull() ?: 0L
+                val min = parts[1].trim().toLongOrNull() ?: 0L
+                val sec = parts[2].trim().toLongOrNull() ?: 0L
+                (hr * 3600 + min * 60 + sec) * 1000L
+            }
+            else -> 0L
+        }
+    } catch (e: Exception) {
+        0L
     }
 }
 

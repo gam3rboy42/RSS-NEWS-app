@@ -67,6 +67,7 @@ fun SwipeableArticleCard(
     onSubscribeFeed: (String, String, String) -> Unit,
     onArchive: (StoryCluster) -> Unit,
     onDislikeSwipe: ((StoryCluster) -> Unit)? = null,
+    onDeleteFeed: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val coroutineScope = rememberCoroutineScope()
@@ -222,7 +223,8 @@ fun SwipeableArticleCard(
                 onOfflineToggle = onOfflineToggle,
                 onLikeToggle = onLikeToggle,
                 onDislikeToggle = onDislikeToggle,
-                onSubscribeFeed = onSubscribeFeed
+                onSubscribeFeed = onSubscribeFeed,
+                onDeleteFeed = onDeleteFeed
             )
         }
     }

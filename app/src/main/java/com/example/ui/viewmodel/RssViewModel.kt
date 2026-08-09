@@ -144,10 +144,15 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
     val mutedAuthors = MutableStateFlow<Set<String>>(repository.getMutedAuthors())
     val mutedSubcategories = MutableStateFlow<Set<String>>(repository.getMutedSubcategories())
 
-    // Topic RSS Search
+    // Topic RSS News Search
     val topicSearchQuery = MutableStateFlow("")
     val topicSearchResults = MutableStateFlow<List<com.example.data.model.FeedDiscoveryItem>>(emptyList())
     val isSearchingTopics = MutableStateFlow(false)
+
+    // Topic Podcast Discover Search
+    val podcastSearchQueryState = MutableStateFlow("")
+    val podcastSearchResults = MutableStateFlow<List<com.example.data.model.FeedDiscoveryItem>>(emptyList())
+    val isSearchingPodcasts = MutableStateFlow(false)
 
     val backgroundRefreshIntervalMinutes = MutableStateFlow(
         com.example.worker.WorkScheduler.getRefreshIntervalMinutes(application)
@@ -572,7 +577,10 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openArticleReader(article: ArticleEntity) {
-        markArticleRead(article.id)
+        val isPodcast = article.isPodcast || article.isVideoPodcast || article.mediaType == "AUDIO" || article.mediaType == "VIDEO" || article.category.equals("PODCASTS", ignoreCase = true)
+        if (!isPodcast) {
+            markArticleRead(article.id)
+        }
         _selectedArticleForReading.value = article
     }
 
@@ -768,8 +776,8 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
         podcastTypeFilter.value = filter
     }
 
-    // Topic RSS Search Method
-    fun searchFeedsByTopic(topic: String) {
+    // Topic RSS News Search Method
+    fun searchNewsFeedsByTopic(topic: String) {
         topicSearchQuery.value = topic
         if (topic.isBlank()) {
             topicSearchResults.value = emptyList()
@@ -777,9 +785,28 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             isSearchingTopics.value = true
-            val results = com.example.data.model.RssTopicSearchManager.searchFeedsForTopic(topic)
+            val results = com.example.data.model.RssTopicSearchManager.searchNewsFeedsForTopic(topic)
             topicSearchResults.value = results
             isSearchingTopics.value = false
+        }
+    }
+
+    fun searchFeedsByTopic(topic: String) {
+        searchNewsFeedsByTopic(topic)
+    }
+
+    // Topic Podcast Search Method
+    fun searchPodcastFeedsByTopic(topic: String) {
+        podcastSearchQueryState.value = topic
+        if (topic.isBlank()) {
+            podcastSearchResults.value = emptyList()
+            return
+        }
+        viewModelScope.launch {
+            isSearchingPodcasts.value = true
+            val results = com.example.data.model.RssTopicSearchManager.searchPodcastFeedsForTopic(topic)
+            podcastSearchResults.value = results
+            isSearchingPodcasts.value = false
         }
     }
 

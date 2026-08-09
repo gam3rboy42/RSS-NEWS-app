@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Forward10
@@ -111,6 +112,7 @@ fun PodcastMediaDialog(
     var currentSeriesIconUrl by remember { mutableStateOf("") }
     var showThumbnailDialog by remember { mutableStateOf(false) }
     var showEditCategoryDialog by remember { mutableStateOf(false) }
+    var showConfirmRemoveFeedDialog by remember { mutableStateOf(false) }
 
     val isVideo = currentArticleState.isVideoPodcast || currentArticleState.mediaType == "VIDEO" || currentArticleState.link.contains("youtube.com") || currentArticleState.link.contains("youtu.be")
     val mediaUrl = currentArticleState.mediaUrl ?: currentArticleState.link
@@ -256,7 +258,7 @@ fun PodcastMediaDialog(
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = "CATEGORY: ${currentArticleState.category.ifBlank { "PODCASTS" }.uppercase()}",
+                                text = "CAT: ${currentArticleState.category.ifBlank { "PODCASTS" }.uppercase()}",
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 9.sp,
@@ -288,12 +290,53 @@ fun PodcastMediaDialog(
                             color = if (currentArticleState.isRead) NothingWhite else NothingTextSecondary
                         )
                     }
+
+                    Box(
+                        modifier = Modifier
+                            .testTag("remove_podcast_feed_badge")
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(NothingSurface)
+                            .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
+                            .clickable { showConfirmRemoveFeedDialog = true }
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Remove Show",
+                                tint = NothingRed,
+                                modifier = Modifier.size(11.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "REMOVE SHOW",
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 9.sp,
+                                color = NothingRed
+                            )
+                        }
+                    }
                 }
 
                 val savedProgressMs = remember(currentArticleState.id) {
                     com.example.util.PodcastProgressManager.getProgress(context, currentArticleState.id)
                 }
-                if (savedProgressMs > 3000L) {
+                val savedDurationMs = remember(currentArticleState.id) {
+                    com.example.util.PodcastProgressManager.getDuration(context, currentArticleState.id)
+                }
+                val parsedDurMs = remember(currentArticleState.duration) {
+                    parseDurationStringToMs(currentArticleState.duration)
+                }
+                val totalDurMs = if (savedDurationMs > 0L) savedDurationMs else parsedDurMs
+
+                if (savedProgressMs > 3000L && !currentArticleState.isRead) {
+                    val remainingMs = totalDurMs - savedProgressMs
+                    val resumeLabel = if (totalDurMs > savedProgressMs) {
+                        "▶ RESUMING FROM ${com.example.util.PodcastProgressManager.formatMs(savedProgressMs)} (${com.example.util.PodcastProgressManager.formatMs(remainingMs)} LEFT)"
+                    } else {
+                        "▶ RESUMING FROM ${com.example.util.PodcastProgressManager.formatMs(savedProgressMs)}"
+                    }
                     Spacer(modifier = Modifier.height(6.dp))
                     Box(
                         modifier = Modifier
@@ -304,7 +347,7 @@ fun PodcastMediaDialog(
                             .padding(horizontal = 8.dp, vertical = 3.dp)
                     ) {
                         Text(
-                            text = "▶ RESUMING FROM ${com.example.util.PodcastProgressManager.formatMs(savedProgressMs)}",
+                            text = resumeLabel,
                             fontFamily = FontFamily.Monospace,
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
@@ -783,6 +826,59 @@ fun PodcastMediaDialog(
                     }
                 }
             }
+        )
+    }
+
+    if (showConfirmRemoveFeedDialog) {
+        AlertDialog(
+            onDismissRequest = { showConfirmRemoveFeedDialog = false },
+            title = {
+                Text(
+                    text = "REMOVE PODCAST SHOW?",
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = NothingWhite
+                )
+            },
+            text = {
+                Text(
+                    text = "Are you sure you want to remove '${currentArticleState.feedTitle}' from your subscribed podcasts? All saved episodes will be deleted.",
+                    fontSize = 13.sp,
+                    color = NothingTextSecondary
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showConfirmRemoveFeedDialog = false
+                        coroutineScope.launch(Dispatchers.IO) {
+                            rssDao.deleteFeedByUrl(currentArticleState.feedUrl)
+                        }
+                        onDismiss()
+                    }
+                ) {
+                    Text(
+                        text = "REMOVE SHOW",
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        color = NothingRed
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showConfirmRemoveFeedDialog = false }
+                ) {
+                    Text(
+                        text = "CANCEL",
+                        fontFamily = FontFamily.Monospace,
+                        color = NothingTextMuted
+                    )
+                }
+            },
+            containerColor = NothingDarkGray,
+            shape = RoundedCornerShape(8.dp)
         )
     }
 }
