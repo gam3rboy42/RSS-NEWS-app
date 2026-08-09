@@ -46,7 +46,7 @@ object PodcastCacheManager {
 
     private const val DEFAULT_MAX_STORAGE_MB = 250
     private const val DEFAULT_AUTO_PRUNE_LISTENED = true
-    private const val DEFAULT_PRUNE_AGE_DAYS = 14
+    private const val DEFAULT_PRUNE_AGE_DAYS = 30
     private const val DEFAULT_AUTO_DOWNLOAD_WIFI = true
 
     fun getCacheDir(context: Context): File {
@@ -306,7 +306,8 @@ object PodcastCacheManager {
             val article = articleMap[hashKey]
             val isBookmarked = article?.isBookmarked == true || article?.isSavedForOffline == true
             val isListened = article?.isRead == true
-            val age = now - f.lastModified()
+            val fileAge = now - f.lastModified()
+            val pubAge = if (article != null && article.pubDateTimestamp > 0) now - article.pubDateTimestamp else 0L
 
             var shouldDelete = false
 
@@ -315,8 +316,8 @@ object PodcastCacheManager {
                 shouldDelete = true
             }
 
-            // Rule 2: Prune files older than age threshold unless bookmarked
-            if (pruneAgeMs > 0 && age > pruneAgeMs && !isBookmarked) {
+            // Rule 2: Prune files older than age threshold (file download age or episode publication age) unless bookmarked
+            if (pruneAgeMs > 0 && !isBookmarked && (fileAge > pruneAgeMs || pubAge > pruneAgeMs)) {
                 shouldDelete = true
             }
 
@@ -325,6 +326,9 @@ object PodcastCacheManager {
                 if (f.delete()) {
                     prunedCount++
                     reclaimedBytes += len
+                    if (article != null) {
+                        try { rssDao.updateOfflineStatus(article.id, false) } catch (_: Exception) {}
+                    }
                 }
             } else {
                 remainingFiles.add(f)
@@ -348,12 +352,23 @@ object PodcastCacheManager {
                     prunedCount++
                     reclaimedBytes += len
                     currentTotalBytes -= len
+                    if (article != null) {
+                        try { rssDao.updateOfflineStatus(article.id, false) } catch (_: Exception) {}
+                    }
                 }
             }
         }
 
         Log.d(TAG, "Smart Prune complete: Removed $prunedCount files, reclaimed ${reclaimedBytes / (1024 * 1024)} MB")
         PruneResult(prunedCount, reclaimedBytes)
+    }
+
+    suspend fun cleanEpisodesOlderThan30Days(context: Context, rssDao: RssDao): PruneResult = withContext(Dispatchers.IO) {
+        val originalPruneAge = getPruneAgeDays(context)
+        setPruneAgeDays(context, 30)
+        val result = autoPruneIfNecessary(context, rssDao)
+        setPruneAgeDays(context, originalPruneAge)
+        result
     }
 
     suspend fun clearAllCache(context: Context): PruneResult = withContext(Dispatchers.IO) {

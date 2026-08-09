@@ -40,6 +40,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FilterAlt
@@ -100,6 +101,8 @@ fun SettingsScreen(viewModel: RssViewModel) {
     val mutedAuthors by viewModel.mutedAuthors.collectAsState()
     val mutedSubcategories by viewModel.mutedSubcategories.collectAsState()
     val autoDownloadWifi by viewModel.autoDownloadWifi.collectAsState()
+    val podcastStorageStats by viewModel.podcastStorageStats.collectAsState()
+    var pruneResultMsg by remember { mutableStateOf<String?>(null) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -1035,6 +1038,92 @@ fun SettingsScreen(viewModel: RssViewModel) {
                                     uncheckedTrackColor = NothingSurface
                                 )
                             )
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Automated Podcast Storage Cleanup (> 30 Days)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(NothingSurface)
+                                .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
+                                .padding(12.dp)
+                        ) {
+                            Column {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.Delete,
+                                            contentDescription = "Cleanup",
+                                            tint = NothingRed,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "AUTOMATED PODCAST CLEANUP (>30 DAYS)",
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp,
+                                            color = NothingWhite
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Downloaded audio files older than 30 days are automatically deleted to keep device storage free. Bookmarked episodes are preserved.",
+                                    fontSize = 10.sp,
+                                    color = NothingTextMuted
+                                )
+                                podcastStorageStats?.let { stats ->
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = "CURRENT STORAGE: %.1f MB (%d EPISODES CACHED)".format(stats.totalMb, stats.totalFiles),
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp,
+                                        color = NothingRed
+                                    )
+                                }
+                                pruneResultMsg?.let { msg ->
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = msg,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp,
+                                        color = NothingWhite
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Button(
+                                    onClick = {
+                                        viewModel.cleanPodcastEpisodesOlderThan30Days { result ->
+                                            pruneResultMsg = "Cleaned ${result.filesPruned} episode(s), freed ${result.bytesReclaimed / (1024 * 1024)} MB!"
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(4.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = NothingRed,
+                                        contentColor = NothingWhite
+                                    ),
+                                    modifier = Modifier
+                                        .testTag("clean_old_podcasts_button")
+                                        .fillMaxWidth()
+                                ) {
+                                    Text(
+                                        text = "RUN 30-DAY PODCAST CLEANUP NOW",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            }
                         }
 
                         Spacer(modifier = Modifier.height(12.dp))

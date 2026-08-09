@@ -78,12 +78,6 @@ class MainActivity : ComponentActivity() {
                         viewModel.onlyBookmarks.value = true
                     }
 
-                    if (nextRoute == ScreenRoute.Podcasts) {
-                        viewModel.setCategory("PODCASTS")
-                    } else if (currentRoute == ScreenRoute.Podcasts && nextRoute != ScreenRoute.Podcasts) {
-                        viewModel.setCategory("ALL")
-                    }
-
                     routeBackStack = previousStack
                 }
 
@@ -108,22 +102,8 @@ class MainActivity : ComponentActivity() {
                                     onNavigate = { route ->
                                         if (route == ScreenRoute.Bookmarks) {
                                             viewModel.onlyBookmarks.value = true
-                                            if (viewModel.selectedCategory.value == "PODCASTS") {
-                                                viewModel.setCategory("ALL")
-                                            }
-                                        } else if (route == ScreenRoute.Stream) {
-                                            viewModel.onlyBookmarks.value = false
-                                            if (viewModel.selectedCategory.value == "PODCASTS") {
-                                                viewModel.setCategory("ALL")
-                                            }
-                                        } else if (route == ScreenRoute.Podcasts) {
-                                            viewModel.onlyBookmarks.value = false
-                                            viewModel.setCategory("PODCASTS")
                                         } else {
                                             viewModel.onlyBookmarks.value = false
-                                            if (viewModel.selectedCategory.value == "PODCASTS") {
-                                                viewModel.setCategory("ALL")
-                                            }
                                         }
 
                                         if (route != currentRoute) {

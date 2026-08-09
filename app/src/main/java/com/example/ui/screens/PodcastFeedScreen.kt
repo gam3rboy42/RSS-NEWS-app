@@ -25,7 +25,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
@@ -77,7 +80,7 @@ fun PodcastFeedScreen(
     viewModel: RssViewModel,
     onNavigateToDiscover: () -> Unit
 ) {
-    val clusters by viewModel.storyClusters.collectAsState()
+    val clusters by viewModel.podcastClusters.collectAsState()
     val podcastTypeFilter by viewModel.podcastTypeFilter.collectAsState()
     val selectedPodcastCategory by viewModel.selectedPodcastCategory.collectAsState()
     val customPodcastCategories by viewModel.customPodcastCategories.collectAsState()
@@ -85,6 +88,9 @@ fun PodcastFeedScreen(
     val syncState by viewModel.syncState.collectAsState()
     val isOnline by viewModel.isOnline.collectAsState()
     val allFeeds by viewModel.allFeeds.collectAsState()
+    val selectedPodcastShowUrl by viewModel.selectedPodcastShowUrl.collectAsState()
+    val selectedPodcastShowTitle by viewModel.selectedPodcastShowTitle.collectAsState()
+    val podcastShowEpisodeLimits by viewModel.podcastShowEpisodeLimits.collectAsState()
 
     val podcastFeeds = remember(allFeeds) {
         allFeeds.filter { it.category.equals("PODCASTS", ignoreCase = true) || it.url.contains("podcast", ignoreCase = true) }
@@ -92,6 +98,8 @@ fun PodcastFeedScreen(
 
     var activePodcastArticle by remember { mutableStateOf<ArticleEntity?>(null) }
     var feedToDelete by remember { mutableStateOf<FeedEntity?>(null) }
+    var feedToEdit by remember { mutableStateOf<FeedEntity?>(null) }
+    var showFeedOptionsDialog by remember { mutableStateOf<FeedEntity?>(null) }
     var showAddCategoryDialog by remember { mutableStateOf(false) }
     var newCategoryInput by remember { mutableStateOf("") }
     var showDiscoverPanel by remember(podcastFeeds.size) { mutableStateOf(podcastFeeds.isEmpty()) }
@@ -352,7 +360,9 @@ fun PodcastFeedScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     items(podcastFeeds, key = { it.url }) { feed ->
-                        val isSelected = searchQuery.equals(feed.title, ignoreCase = true)
+                        val isSelected = (selectedPodcastShowUrl != null && selectedPodcastShowUrl == feed.url) ||
+                                (selectedPodcastShowTitle != null && selectedPodcastShowTitle.equals(feed.title, ignoreCase = true)) ||
+                                searchQuery.equals(feed.title, ignoreCase = true)
 
                         LaunchedEffect(feed.url, feed.iconUrl) {
                             if (feed.iconUrl.isBlank()) {
@@ -368,14 +378,10 @@ fun PodcastFeedScreen(
                                 .pointerInput(feed.url) {
                                     detectTapGestures(
                                         onTap = {
-                                            if (isSelected) {
-                                                viewModel.searchQuery.value = ""
-                                            } else {
-                                                viewModel.searchQuery.value = feed.title
-                                            }
+                                            viewModel.selectPodcastShow(if (isSelected) null else feed.url, if (isSelected) null else feed.title)
                                         },
                                         onLongPress = {
-                                            feedToDelete = feed
+                                            showFeedOptionsDialog = feed
                                         }
                                     )
                                 }
@@ -428,7 +434,146 @@ fun PodcastFeedScreen(
             }
         }
 
+        // Active Podcast Show Filter Banner
+        if (selectedPodcastShowTitle != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(NothingSurface)
+                    .border(1.dp, NothingRed, RoundedCornerShape(4.dp))
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Headphones,
+                            contentDescription = "Selected Podcast",
+                            tint = NothingRed,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                text = "SHOW FILTER ACTIVE:",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 8.sp,
+                                color = NothingTextMuted
+                            )
+                            Text(
+                                text = selectedPodcastShowTitle!!.uppercase(),
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = NothingWhite,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .testTag("edit_active_show_subcat_btn")
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(NothingBlack)
+                                .border(1.dp, NothingRed, RoundedCornerShape(4.dp))
+                                .clickable {
+                                    val matchedFeed = podcastFeeds.find {
+                                        (selectedPodcastShowUrl != null && it.url == selectedPodcastShowUrl) ||
+                                        (selectedPodcastShowTitle != null && it.title.equals(selectedPodcastShowTitle, ignoreCase = true))
+                                    }
+                                    if (matchedFeed != null) {
+                                        feedToEdit = matchedFeed
+                                    }
+                                }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Edit Subcategory",
+                                    tint = NothingRed,
+                                    modifier = Modifier.size(11.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "EDIT SUBCAT",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 9.sp,
+                                    color = NothingWhite
+                                )
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .testTag("clear_selected_podcast_show_btn")
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(NothingBlack)
+                                .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
+                                .clickable { viewModel.clearSelectedPodcastShow() }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Clear",
+                                    tint = NothingRed,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "ALL SHOWS",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 9.sp,
+                                    color = NothingWhite
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Spacer(modifier = Modifier.height(4.dp))
+
+        val visibleClusters = remember(clusters, podcastShowEpisodeLimits, selectedPodcastShowUrl, selectedPodcastShowTitle) {
+            if (selectedPodcastShowUrl != null) {
+                val normUrl = selectedPodcastShowUrl!!.trim().trimEnd('/').lowercase()
+                val limit = podcastShowEpisodeLimits[normUrl] ?: (podcastShowEpisodeLimits["_global_"] ?: 10)
+                clusters.take(limit)
+            } else {
+                val globalLimit = podcastShowEpisodeLimits["_global_"] ?: 10
+                val showCounts = mutableMapOf<String, Int>()
+                clusters.filter { cluster ->
+                    val primary = cluster.primaryArticle
+                    val normFeedUrl = primary.feedUrl.trim().trimEnd('/').lowercase()
+                    val key = if (normFeedUrl.isNotBlank()) normFeedUrl else primary.feedTitle.trim().lowercase()
+                    val limit = podcastShowEpisodeLimits[key] ?: globalLimit
+                    val count = showCounts.getOrDefault(key, 0)
+                    if (count < limit) {
+                        showCounts[key] = count + 1
+                        true
+                    } else {
+                        false
+                    }
+                }
+            }
+        }
 
         // Podcast Episode Stream
         if (clusters.isEmpty()) {
@@ -503,7 +648,7 @@ fun PodcastFeedScreen(
                 contentPadding = PaddingValues(bottom = 80.dp)
             ) {
                 items(
-                    items = clusters,
+                    items = visibleClusters,
                     key = { it.clusterId }
                 ) { cluster ->
                     SwipeableArticleCard(
@@ -541,6 +686,71 @@ fun PodcastFeedScreen(
                             viewModel.dislikeCluster(dislikedCluster)
                         }
                     )
+                }
+
+                if (clusters.size > visibleClusters.size) {
+                    item(key = "podcast_load_more_btn") {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 16.dp, horizontal = 16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                val labelText = if (selectedPodcastShowTitle != null) {
+                                    "SHOWING ${visibleClusters.size} OF ${clusters.size} EPISODES FOR THIS SHOW"
+                                } else {
+                                    "SHOWING ${visibleClusters.size} OF ${clusters.size} EPISODES ACROSS ALL SHOWS"
+                                }
+                                Text(
+                                    text = labelText,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    color = NothingTextMuted
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Button(
+                                    onClick = { viewModel.loadMorePodcastEpisodes(selectedPodcastShowUrl) },
+                                    shape = RoundedCornerShape(4.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = NothingRed,
+                                        contentColor = NothingWhite
+                                    ),
+                                    modifier = Modifier
+                                        .testTag("load_more_podcast_episodes_btn")
+                                        .fillMaxWidth(0.85f)
+                                        .height(46.dp)
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.ExpandMore,
+                                            contentDescription = "Load More Episodes",
+                                            tint = NothingWhite,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        val btnText = if (selectedPodcastShowTitle != null) {
+                                            "LOAD MORE OLDER EPISODES (+10)"
+                                        } else {
+                                            "LOAD MORE OLDER EPISODES (+10 PER SHOW)"
+                                        }
+                                        Text(
+                                            text = btnText,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 12.sp
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -678,6 +888,90 @@ fun PodcastFeedScreen(
             },
             containerColor = NothingDarkGray,
             shape = RoundedCornerShape(8.dp)
+        )
+    }
+
+    // Options Dialog for long pressed podcast feed
+    showFeedOptionsDialog?.let { feed ->
+        AlertDialog(
+            onDismissRequest = { showFeedOptionsDialog = null },
+            title = {
+                Text(
+                    text = "MANAGE PODCAST SHOW",
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = NothingWhite
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        text = feed.title,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = NothingRed
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Current Category: ${feed.category.ifBlank { "PODCASTS" }}",
+                        fontSize = 12.sp,
+                        color = NothingTextSecondary
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val targetFeed = feed
+                        showFeedOptionsDialog = null
+                        feedToEdit = targetFeed
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = NothingRed),
+                    shape = RoundedCornerShape(4.dp)
+                ) {
+                    Text(
+                        text = "EDIT CATEGORY / SUBCATEGORY",
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 10.sp,
+                        color = NothingWhite
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        val targetFeed = feed
+                        showFeedOptionsDialog = null
+                        feedToDelete = targetFeed
+                    }
+                ) {
+                    Text(
+                        text = "REMOVE SHOW",
+                        fontFamily = FontFamily.Monospace,
+                        color = NothingTextMuted,
+                        fontSize = 10.sp
+                    )
+                }
+            },
+            containerColor = NothingDarkGray,
+            shape = RoundedCornerShape(8.dp)
+        )
+    }
+
+    // Category and Subcategory edit dialog for selected feed
+    feedToEdit?.let { feed ->
+        com.example.ui.components.PodcastSeriesCategoryEditDialog(
+            feedTitle = feed.title,
+            currentCategory = feed.category,
+            currentSubcategory = "",
+            onDismiss = { feedToEdit = null },
+            onSaveCategoryAndSubcategory = { newCat, newSubcat ->
+                viewModel.updatePodcastCategoryAndSubcategory(feed.url, newCat, newSubcat)
+                feedToEdit = null
+            }
         )
     }
 }

@@ -154,6 +154,11 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
     val podcastSearchResults = MutableStateFlow<List<com.example.data.model.FeedDiscoveryItem>>(emptyList())
     val isSearchingPodcasts = MutableStateFlow(false)
 
+    // Selected Podcast Show & Episode Pagination State
+    val selectedPodcastShowUrl = MutableStateFlow<String?>(null)
+    val selectedPodcastShowTitle = MutableStateFlow<String?>(null)
+    val podcastShowEpisodeLimits = MutableStateFlow<Map<String, Int>>(emptyMap())
+
     val backgroundRefreshIntervalMinutes = MutableStateFlow(
         com.example.worker.WorkScheduler.getRefreshIntervalMinutes(application)
     )
@@ -229,7 +234,7 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
         state.copy(readHistory = readHist)
     }
 
-    // Active story stream dynamically combining filters & search
+    // Active story stream dynamically combining filters & search (News Stream)
     @OptIn(ExperimentalCoroutinesApi::class)
     val storyClusters: StateFlow<List<StoryCluster>> = combine(filterState, randomOrderSeed) { filters, seed ->
         Pair(filters, seed)
@@ -275,58 +280,6 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
                 gameKeywords.any { kw -> titleLower.contains(kw) || descLower.contains(kw) }
             }
         }
-    }.combine(podcastTypeFilter) { clusters, podcastFilter ->
-        if (selectedCategory.value != "PODCASTS" || podcastFilter == "ALL") {
-            clusters
-        } else if (podcastFilter == "VIDEO") {
-            clusters.filter { cluster ->
-                cluster.articles.any { it.isVideoPodcast || it.mediaType == "VIDEO" }
-            }
-        } else if (podcastFilter == "AUDIO") {
-            clusters.filter { cluster ->
-                cluster.articles.any { it.isPodcast && !it.isVideoPodcast && it.mediaType != "VIDEO" }
-            }
-        } else if (podcastFilter == "DOWNLOADED") {
-            val appCtx = getApplication<Application>()
-            clusters.filter { cluster ->
-                cluster.articles.any { art ->
-                    val isPod = art.isPodcast || art.isVideoPodcast || art.mediaType == "AUDIO" || art.mediaType == "VIDEO" || art.category.equals("PODCASTS", ignoreCase = true)
-                    isPod && (art.isSavedForOffline || com.example.util.PodcastCacheManager.isArticleCached(appCtx, art.id))
-                }
-            }
-        } else {
-            clusters
-        }
-    }.combine(selectedPodcastCategory) { clusters, podcastCat ->
-        if (selectedCategory.value != "PODCASTS" || podcastCat == "ALL") {
-            clusters
-        } else {
-            val catUpper = podcastCat.uppercase().trim()
-            val catKeywords = when (catUpper) {
-                "TECH & AI" -> listOf("tech", "ai", "code", "software", "google", "apple", "developer", "hardware", "cyber", "data", "robot")
-                "NEWS & POLITICS" -> listOf("news", "politics", "world", "daily", "report", "briefing", "state", "global", "policy", "senate")
-                "TRUE CRIME" -> listOf("crime", "murder", "mystery", "investigation", "detective", "serial", "case", "court", "victim")
-                "SCIENCE" -> listOf("science", "space", "physics", "biology", "nature", "huberman", "lab", "research", "nasa", "genetics")
-                "BUSINESS & FINANCE" -> listOf("business", "finance", "money", "investing", "crypto", "market", "startup", "economy", "trade", "ceo")
-                "COMEDY" -> listOf("comedy", "funny", "humor", "joke", "standup", "banter", "laugh", "parody")
-                "GAMING & GEEK" -> listOf("game", "gaming", "ign", "kotaku", "nintendo", "playstation", "xbox", "movie", "anime", "marvel")
-                "CULTURE & HISTORY" -> listOf("history", "culture", "art", "music", "philosophy", "story", "book", "society", "museum")
-                "HEALTH & FITNESS" -> listOf("health", "fitness", "workout", "mind", "meditation", "diet", "doctor", "wellness", "sleep")
-                "AUDIOBOOKS" -> listOf("audiobook", "fiction", "novel", "read", "chapter", "story", "book")
-                else -> listOf(catUpper.lowercase())
-            }
-            clusters.filter { cluster ->
-                cluster.articles.any { article ->
-                    val artCat = article.category.uppercase()
-                    val feedTitle = article.feedTitle.lowercase()
-                    val artTitle = article.title.lowercase()
-                    val artDesc = article.description.lowercase()
-
-                    artCat.contains(catUpper) ||
-                            catKeywords.any { kw -> feedTitle.contains(kw) || artTitle.contains(kw) || artDesc.contains(kw) }
-                }
-            }
-        }
     }.combine(savedSubMenuFilter) { clusters, savedFilter ->
         if (!onlyBookmarks.value || savedFilter == "ALL") {
             clusters
@@ -350,11 +303,108 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
         initialValue = emptyList()
     )
 
+    // Dedicated Podcast stream completely independent of News stream category
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val podcastClusters: StateFlow<List<StoryCluster>> = combine(
+        repository.getClusteredFeedStream(
+            categoryFilter = "PODCASTS",
+            timeRangeFilter = com.example.data.model.TimeRangeFilter.ALL_TIME,
+            hideDeals = false,
+            onlyPreferredFeeds = false,
+            onlyBookmarks = false,
+            onlyOffline = false,
+            onlyRecommendations = false,
+            onlyReadHistory = false,
+            randomSeed = 0L
+        ),
+        podcastTypeFilter,
+        selectedPodcastCategory,
+        selectedPodcastShowUrl,
+        searchQuery
+    ) { clusters, podcastFilter, podcastCat, selectedUrl, query ->
+        val appCtx = getApplication<Application>()
+        var result = clusters
+
+        if (podcastFilter == "VIDEO") {
+            result = result.filter { cluster ->
+                cluster.articles.any { it.isVideoPodcast || it.mediaType == "VIDEO" }
+            }
+        } else if (podcastFilter == "AUDIO") {
+            result = result.filter { cluster ->
+                cluster.articles.any { it.isPodcast && !it.isVideoPodcast && it.mediaType != "VIDEO" }
+            }
+        } else if (podcastFilter == "DOWNLOADED") {
+            result = result.filter { cluster ->
+                cluster.articles.any { art ->
+                    val isPod = art.isPodcast || art.isVideoPodcast || art.mediaType == "AUDIO" || art.mediaType == "VIDEO" || art.category.equals("PODCASTS", ignoreCase = true)
+                    isPod && (art.isSavedForOffline || com.example.util.PodcastCacheManager.isArticleCached(appCtx, art.id))
+                }
+            }
+        }
+
+        if (podcastCat != "ALL" && podcastCat.isNotBlank()) {
+            val catUpper = podcastCat.uppercase().trim()
+            val catKeywords = when (catUpper) {
+                "TECH & AI" -> listOf("tech", "ai", "code", "software", "google", "apple", "developer", "hardware", "cyber", "data", "robot")
+                "NEWS & POLITICS" -> listOf("news", "politics", "world", "daily", "report", "briefing", "state", "global", "policy", "senate")
+                "TRUE CRIME" -> listOf("crime", "murder", "mystery", "investigation", "detective", "serial", "case", "court", "victim")
+                "SCIENCE" -> listOf("science", "space", "physics", "biology", "nature", "huberman", "lab", "research", "nasa", "genetics")
+                "BUSINESS & FINANCE" -> listOf("business", "finance", "money", "investing", "crypto", "market", "startup", "economy", "trade", "ceo")
+                "COMEDY" -> listOf("comedy", "funny", "humor", "joke", "standup", "banter", "laugh", "parody")
+                "GAMING & GEEK" -> listOf("game", "gaming", "ign", "kotaku", "nintendo", "playstation", "xbox", "movie", "anime", "marvel")
+                "CULTURE & HISTORY" -> listOf("history", "culture", "art", "music", "philosophy", "story", "book", "society", "museum")
+                "HEALTH & FITNESS" -> listOf("health", "fitness", "workout", "mind", "meditation", "diet", "doctor", "wellness", "sleep")
+                "AUDIOBOOKS" -> listOf("audiobook", "fiction", "novel", "read", "chapter", "story", "book")
+                else -> listOf(catUpper.lowercase())
+            }
+            result = result.filter { cluster ->
+                cluster.articles.any { article ->
+                    val artCat = article.category.uppercase()
+                    val artSubcat = article.subcategory.uppercase()
+                    val feedTitle = article.feedTitle.lowercase()
+                    val artTitle = article.title.lowercase()
+                    val artDesc = article.description.lowercase()
+
+                    artCat.contains(catUpper) || artSubcat.contains(catUpper) ||
+                            catKeywords.any { kw -> feedTitle.contains(kw) || artTitle.contains(kw) || artDesc.contains(kw) }
+                }
+            }
+        }
+
+        if (!selectedUrl.isNullOrBlank()) {
+            val normSelectedUrl = selectedUrl.trim().trimEnd('/').lowercase()
+            val selectedTitle = selectedPodcastShowTitle.value?.trim()?.lowercase() ?: ""
+            result = result.filter { cluster ->
+                cluster.articles.any { art ->
+                    val normArtUrl = art.feedUrl.trim().trimEnd('/').lowercase()
+                    val artTitle = art.feedTitle.trim().lowercase()
+                    normArtUrl == normSelectedUrl || (selectedTitle.isNotBlank() && artTitle == selectedTitle)
+                }
+            }
+        }
+
+        if (query.isNotBlank()) {
+            val q = query.lowercase().trim()
+            result = result.filter { cluster ->
+                cluster.primaryTitle.lowercase().contains(q) ||
+                cluster.articles.any { art -> art.feedTitle.lowercase().contains(q) || art.description.lowercase().contains(q) }
+            }
+        }
+
+        result
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
     init {
         customPodcastCategories.value = loadCustomPodcastCategories()
         viewModelScope.launch {
             repository.initializeDefaultsIfNeeded()
             checkOnlineStatus()
+            com.example.util.PodcastCacheManager.autoPruneIfNecessary(getApplication(), db.rssDao())
+            refreshPodcastStorageStats()
             val articleCount = repository.getArticleCount()
             if (articleCount == 0) {
                 refreshNews()
@@ -920,12 +970,64 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun cleanPodcastEpisodesOlderThan30Days(onResult: (com.example.util.PruneResult) -> Unit = {}) {
+        viewModelScope.launch {
+            val result = com.example.util.PodcastCacheManager.cleanEpisodesOlderThan30Days(getApplication(), db.rssDao())
+            refreshPodcastStorageStats()
+            onResult(result)
+        }
+    }
+
     fun clearAllPodcastCache(onResult: (com.example.util.PruneResult) -> Unit) {
         viewModelScope.launch {
             val result = com.example.util.PodcastCacheManager.clearAllCache(getApplication())
             refreshPodcastStorageStats()
             onResult(result)
         }
+    }
+
+    fun selectPodcastShow(feedUrl: String?, feedTitle: String?) {
+        if (selectedPodcastShowUrl.value == feedUrl && feedUrl != null) {
+            selectedPodcastShowUrl.value = null
+            selectedPodcastShowTitle.value = null
+        } else {
+            selectedPodcastShowUrl.value = feedUrl
+            selectedPodcastShowTitle.value = feedTitle
+        }
+    }
+
+    fun clearSelectedPodcastShow() {
+        selectedPodcastShowUrl.value = null
+        selectedPodcastShowTitle.value = null
+    }
+
+    fun updatePodcastCategoryAndSubcategory(feedUrl: String, newCategory: String, newSubcategory: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            db.rssDao().updateFeedCategory(feedUrl, newCategory)
+            db.rssDao().updateArticlesCategoryAndSubcategoryByFeedUrl(feedUrl, newCategory, newSubcategory, true)
+            refreshNews()
+        }
+    }
+
+    fun updateArticleSubcategory(articleId: String, newSubcategory: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            db.rssDao().updateArticleSubcategoryById(articleId, newSubcategory)
+            refreshNews()
+        }
+    }
+
+    fun loadMorePodcastEpisodes(feedUrl: String? = null) {
+        val targetUrl = feedUrl ?: selectedPodcastShowUrl.value
+        val currentMap = podcastShowEpisodeLimits.value.toMutableMap()
+        if (!targetUrl.isNullOrBlank()) {
+            val normUrl = targetUrl.trim().trimEnd('/').lowercase()
+            val currentLimit = currentMap[normUrl] ?: 10
+            currentMap[normUrl] = currentLimit + 10
+        } else {
+            val currentGlobal = currentMap["_global_"] ?: 10
+            currentMap["_global_"] = currentGlobal + 10
+        }
+        podcastShowEpisodeLimits.value = currentMap
     }
 
     fun downloadPodcastForOffline(

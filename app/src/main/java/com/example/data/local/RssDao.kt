@@ -52,8 +52,17 @@ interface RssDao {
     @Query("UPDATE articles SET category = :category, isPodcast = :isPodcast WHERE feedUrl = :feedUrl")
     suspend fun updateArticlesCategoryByFeedUrl(feedUrl: String, category: String, isPodcast: Boolean = true)
 
+    @Query("UPDATE articles SET subcategory = :subcategory WHERE feedUrl = :feedUrl")
+    suspend fun updateArticlesSubcategoryByFeedUrl(feedUrl: String, subcategory: String)
+
+    @Query("UPDATE articles SET category = :category, subcategory = :subcategory, isPodcast = :isPodcast WHERE feedUrl = :feedUrl")
+    suspend fun updateArticlesCategoryAndSubcategoryByFeedUrl(feedUrl: String, category: String, subcategory: String, isPodcast: Boolean = true)
+
     @Query("UPDATE articles SET category = :category, isPodcast = :isPodcast WHERE id = :id")
     suspend fun updateArticleCategoryById(id: String, category: String, isPodcast: Boolean = true)
+
+    @Query("UPDATE articles SET subcategory = :subcategory WHERE id = :id")
+    suspend fun updateArticleSubcategoryById(id: String, subcategory: String)
 
     @Query("DELETE FROM feeds WHERE url = :url")
     suspend fun deleteFeedByUrl(url: String)

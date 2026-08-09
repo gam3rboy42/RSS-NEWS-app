@@ -12,6 +12,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -257,8 +259,10 @@ fun PodcastMediaDialog(
                                 modifier = Modifier.size(11.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
+                            val catStr = currentArticleState.category.ifBlank { "PODCASTS" }.uppercase()
+                            val subcatStr = currentArticleState.subcategory.ifBlank { "GENERAL" }.uppercase()
                             Text(
-                                text = "CAT: ${currentArticleState.category.ifBlank { "PODCASTS" }.uppercase()}",
+                                text = "CAT: $catStr / $subcatStr",
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 9.sp,
@@ -810,17 +814,18 @@ fun PodcastMediaDialog(
         PodcastSeriesCategoryEditDialog(
             feedTitle = currentArticleState.feedTitle,
             currentCategory = currentArticleState.category,
+            currentSubcategory = currentArticleState.subcategory,
             onDismiss = { showEditCategoryDialog = false },
-            onSaveCategory = { newCategory ->
+            onSaveCategoryAndSubcategory = { newCategory, newSubcategory ->
                 coroutineScope.launch(Dispatchers.IO) {
                     rssDao.updateFeedCategory(currentArticleState.feedUrl, newCategory)
-                    rssDao.updateArticlesCategoryByFeedUrl(currentArticleState.feedUrl, newCategory, true)
-                    currentArticleState = currentArticleState.copy(category = newCategory, isPodcast = true)
+                    rssDao.updateArticlesCategoryAndSubcategoryByFeedUrl(currentArticleState.feedUrl, newCategory, newSubcategory, true)
+                    currentArticleState = currentArticleState.copy(category = newCategory, subcategory = newSubcategory, isPodcast = true)
                     withContext(Dispatchers.Main) {
                         showEditCategoryDialog = false
                         android.widget.Toast.makeText(
                             context,
-                            "Reclassified '${currentArticleState.feedTitle}' as $newCategory",
+                            "Reclassified '${currentArticleState.feedTitle}' as $newCategory / $newSubcategory",
                             android.widget.Toast.LENGTH_SHORT
                         ).show()
                     }
@@ -888,17 +893,28 @@ fun PodcastMediaDialog(
 fun PodcastSeriesCategoryEditDialog(
     feedTitle: String,
     currentCategory: String,
+    currentSubcategory: String = "",
     onDismiss: () -> Unit,
-    onSaveCategory: (newCategory: String) -> Unit
+    onSaveCategoryAndSubcategory: (newCategory: String, newSubcategory: String) -> Unit
 ) {
     var selectedCategory by remember { mutableStateOf(currentCategory.ifBlank { "PODCASTS" }) }
     var customCategoryInput by remember { mutableStateOf("") }
-    var isCustomSelected by remember { mutableStateOf(false) }
+    var isCustomCategorySelected by remember { mutableStateOf(false) }
+
+    var selectedSubcategory by remember { mutableStateOf(currentSubcategory.ifBlank { "DISCUSSION" }) }
+    var customSubcategoryInput by remember { mutableStateOf("") }
+    var isCustomSubcategorySelected by remember { mutableStateOf(false) }
 
     val presetCategories = listOf(
         "PODCASTS", "TECH & AI", "NEWS & POLITICS", "TRUE CRIME", "SCIENCE",
         "BUSINESS & FINANCE", "COMEDY", "GAMING & GEEK", "CULTURE & HISTORY",
         "HEALTH & FITNESS", "AUDIOBOOKS"
+    )
+
+    val presetSubcategories = listOf(
+        "DISCUSSION", "INTERVIEWS", "NEWS & ANALYSIS", "AI & CHIPS",
+        "HARDWARE & GADGETS", "SOFTWARE & APPS", "BUSINESS & FINANCE",
+        "SCIENCE & SPACE", "CULTURE & HISTORY", "GENERAL"
     )
 
     AlertDialog(
@@ -910,13 +926,13 @@ fun PodcastSeriesCategoryEditDialog(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         imageVector = Icons.Default.Edit,
-                        contentDescription = "Edit Series Category",
+                        contentDescription = "Edit Category and Subcategory",
                         tint = NothingRed,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "EDIT PODCAST CATEGORY",
+                        text = "EDIT CATEGORY & SUBCATEGORY",
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp,
@@ -925,7 +941,7 @@ fun PodcastSeriesCategoryEditDialog(
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Change category for '$feedTitle' to reclassify series",
+                    text = "Reclassify '$feedTitle' main category & topic subcategory",
                     style = MaterialTheme.typography.bodySmall,
                     color = NothingTextMuted,
                     fontSize = 10.sp
@@ -933,13 +949,18 @@ fun PodcastSeriesCategoryEditDialog(
             }
         },
         text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+            ) {
+                // Main Category Section
                 Text(
-                    text = "SELECT CATEGORY PRESET:",
+                    text = "1. MAIN CATEGORY PRESET:",
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
                     fontSize = 10.sp,
-                    color = NothingTextSecondary
+                    color = NothingRed
                 )
                 Spacer(modifier = Modifier.height(6.dp))
 
@@ -949,7 +970,7 @@ fun PodcastSeriesCategoryEditDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     presetCategories.forEach { cat ->
-                        val isSelected = !isCustomSelected && selectedCategory.equals(cat, ignoreCase = true)
+                        val isSelected = !isCustomCategorySelected && selectedCategory.equals(cat, ignoreCase = true)
                         Box(
                             modifier = Modifier
                                 .testTag("category_option_$cat")
@@ -957,7 +978,7 @@ fun PodcastSeriesCategoryEditDialog(
                                 .background(if (isSelected) NothingRed else NothingSurface)
                                 .border(1.dp, if (isSelected) NothingRed else NothingBorder, RoundedCornerShape(4.dp))
                                 .clickable {
-                                    isCustomSelected = false
+                                    isCustomCategorySelected = false
                                     selectedCategory = cat
                                 }
                                 .padding(horizontal = 8.dp, vertical = 5.dp)
@@ -973,30 +994,21 @@ fun PodcastSeriesCategoryEditDialog(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Text(
-                    text = "OR ENTER CUSTOM CATEGORY:",
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 10.sp,
-                    color = NothingTextSecondary
-                )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 OutlinedTextField(
                     value = customCategoryInput,
                     onValueChange = {
                         customCategoryInput = it
                         if (it.isNotBlank()) {
-                            isCustomSelected = true
+                            isCustomCategorySelected = true
                         }
                     },
                     placeholder = {
                         Text(
-                            text = "e.g. DESIGN, INVESTING...",
+                            text = "Or enter custom main category...",
                             fontFamily = FontFamily.Monospace,
-                            fontSize = 11.sp,
+                            fontSize = 10.sp,
                             color = NothingTextMuted
                         )
                     },
@@ -1014,17 +1026,99 @@ fun PodcastSeriesCategoryEditDialog(
                         unfocusedTextColor = NothingWhite
                     )
                 )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Subcategory Section
+                Text(
+                    text = "2. TOPIC SUBCATEGORY PRESET:",
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp,
+                    color = NothingRed
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    presetSubcategories.forEach { subcat ->
+                        val isSelected = !isCustomSubcategorySelected && selectedSubcategory.equals(subcat, ignoreCase = true)
+                        Box(
+                            modifier = Modifier
+                                .testTag("subcategory_option_$subcat")
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(if (isSelected) NothingWhite else NothingSurface)
+                                .border(1.dp, if (isSelected) NothingWhite else NothingBorder, RoundedCornerShape(4.dp))
+                                .clickable {
+                                    isCustomSubcategorySelected = false
+                                    selectedSubcategory = subcat
+                                }
+                                .padding(horizontal = 8.dp, vertical = 5.dp)
+                        ) {
+                            Text(
+                                text = subcat,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 9.sp,
+                                color = if (isSelected) NothingBlack else NothingTextSecondary
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = customSubcategoryInput,
+                    onValueChange = {
+                        customSubcategoryInput = it
+                        if (it.isNotBlank()) {
+                            isCustomSubcategorySelected = true
+                        }
+                    },
+                    placeholder = {
+                        Text(
+                            text = "e.g. DISCUSSION, TALK SHOW...",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            color = NothingTextMuted
+                        )
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("custom_subcategory_input"),
+                    shape = RoundedCornerShape(4.dp),
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = NothingSurface,
+                        unfocusedContainerColor = NothingSurface,
+                        focusedBorderColor = NothingRed,
+                        unfocusedBorderColor = NothingBorder,
+                        focusedTextColor = NothingWhite,
+                        unfocusedTextColor = NothingWhite
+                    )
+                )
             }
         },
         confirmButton = {
             Button(
                 onClick = {
-                    val finalCategory = if (isCustomSelected && customCategoryInput.isNotBlank()) {
+                    val finalCategory = if (isCustomCategorySelected && customCategoryInput.isNotBlank()) {
                         customCategoryInput.trim().uppercase()
                     } else {
                         selectedCategory
                     }
-                    onSaveCategory(finalCategory)
+
+                    val finalSubcategory = if (isCustomSubcategorySelected && customSubcategoryInput.isNotBlank()) {
+                        customSubcategoryInput.trim().uppercase()
+                    } else {
+                        selectedSubcategory
+                    }
+
+                    onSaveCategoryAndSubcategory(finalCategory, finalSubcategory)
                 },
                 colors = ButtonDefaults.buttonColors(
                     containerColor = NothingRed,
@@ -1034,7 +1128,7 @@ fun PodcastSeriesCategoryEditDialog(
                 modifier = Modifier.testTag("save_podcast_category_button")
             ) {
                 Text(
-                    text = "SAVE CATEGORY",
+                    text = "SAVE CATEGORY & SUBCATEGORY",
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
                     fontSize = 10.sp

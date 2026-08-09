@@ -17,13 +17,11 @@ object DefaultFeedCatalog {
     val newsCategories = listOf("ALL", "TECH", "SCIENCE", "GAMING", "WORLD", "BUSINESS", "DESIGN", "AI")
     val categories = listOf("ALL", "TECH", "SCIENCE", "GAMING", "WORLD", "BUSINESS", "DESIGN", "AI")
 
-    val curatedNewsFeeds by lazy {
-        curatedFeeds.filter { !it.isPodcast && !it.category.equals("PODCASTS", ignoreCase = true) }
-    }
+    val curatedNewsFeeds: List<FeedDiscoveryItem>
+        get() = curatedFeeds.filter { !it.isPodcast && !it.category.equals("PODCASTS", ignoreCase = true) }
 
-    val curatedPodcastFeeds by lazy {
-        curatedFeeds.filter { it.isPodcast || it.category.equals("PODCASTS", ignoreCase = true) }
-    }
+    val curatedPodcastFeeds: List<FeedDiscoveryItem>
+        get() = curatedFeeds.filter { it.isPodcast || it.category.equals("PODCASTS", ignoreCase = true) }
 
     fun toDefaultEntities(): List<FeedEntity> {
         return curatedNewsFeeds.map { item ->
@@ -38,6 +36,8 @@ object DefaultFeedCatalog {
             )
         }
     }
+
+    val curatedFeeds = listOf(
         // PODCASTS (AUDIO & VIDEO)
         FeedDiscoveryItem(
             title = "TWiT HD Video Netcast",
