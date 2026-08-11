@@ -116,8 +116,13 @@ fun PodcastMediaDialog(
     var showEditCategoryDialog by remember { mutableStateOf(false) }
     var showConfirmRemoveFeedDialog by remember { mutableStateOf(false) }
 
-    val isVideo = currentArticleState.isVideoPodcast || currentArticleState.mediaType == "VIDEO" || currentArticleState.link.contains("youtube.com") || currentArticleState.link.contains("youtu.be")
     val mediaUrl = currentArticleState.mediaUrl ?: currentArticleState.link
+    val lowerMediaUrl = mediaUrl.lowercase()
+    val isAudioMedia = currentArticleState.mediaType == "AUDIO" ||
+            lowerMediaUrl.contains(".mp3") || lowerMediaUrl.contains(".m4a") ||
+            lowerMediaUrl.contains(".ogg") || lowerMediaUrl.contains(".wav") ||
+            lowerMediaUrl.contains(".aac") || lowerMediaUrl.contains(".flac")
+    val isVideo = !isAudioMedia && (currentArticleState.isVideoPodcast || currentArticleState.mediaType == "VIDEO" || lowerMediaUrl.contains(".mp4") || lowerMediaUrl.contains(".m4v") || lowerMediaUrl.contains(".webm"))
 
     // Collect global background podcast state
     val activeArticle by PodcastPlayerManager.activeArticle.collectAsState()
@@ -373,61 +378,21 @@ fun PodcastMediaDialog(
                             .border(1.dp, NothingBorder, RoundedCornerShape(6.dp)),
                         contentAlignment = Alignment.Center
                     ) {
-                        if (mediaUrl.contains("youtube.com") || mediaUrl.contains("youtu.be")) {
-                            // YouTube Link
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center,
-                                modifier = Modifier.padding(16.dp)
-                            ) {
-                                Text(
-                                    text = "YOUTUBE VIDEO PODCAST",
-                                    fontFamily = FontFamily.Monospace,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp,
-                                    color = NothingWhite
-                                )
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = "Watch this video podcast episode directly on YouTube.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = NothingTextMuted
-                                )
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Button(
-                                    onClick = { onOpenInBrowser(mediaUrl) },
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = NothingRed,
-                                        contentColor = NothingWhite
-                                    ),
-                                    shape = RoundedCornerShape(4.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.OpenInBrowser,
-                                        contentDescription = "Open YouTube",
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("OPEN IN YOUTUBE / BROWSER", fontFamily = FontFamily.Monospace, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        } else {
-                            // Direct Video Stream (MP4 / M4V) using Android VideoView
-                            AndroidView(
-                                factory = { ctx ->
-                                    VideoView(ctx).apply {
-                                        setVideoURI(Uri.parse(mediaUrl))
-                                        val mediaController = MediaController(ctx)
-                                        mediaController.setAnchorView(this)
-                                        setMediaController(mediaController)
-                                        setOnPreparedListener { mp ->
-                                            start()
-                                        }
+                        // Direct Video Stream (MP4 / M4V) using Android VideoView
+                        AndroidView(
+                            factory = { ctx ->
+                                VideoView(ctx).apply {
+                                    setVideoURI(Uri.parse(mediaUrl))
+                                    val mediaController = MediaController(ctx)
+                                    mediaController.setAnchorView(this)
+                                    setMediaController(mediaController)
+                                    setOnPreparedListener { mp ->
+                                        start()
                                     }
-                                },
-                                modifier = Modifier.fillMaxWidth().height(200.dp)
-                            )
-                        }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().height(200.dp)
+                        )
                     }
                 } else {
                     // AUDIO BACKGROUND PLAYER WITH NOTHING WAVEFORM

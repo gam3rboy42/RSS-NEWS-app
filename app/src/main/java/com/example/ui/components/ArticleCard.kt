@@ -416,7 +416,9 @@ fun ArticleCard(
 
                         if (primaryArticle.isPodcast || primaryArticle.isVideoPodcast || primaryArticle.mediaType == "AUDIO" || primaryArticle.mediaType == "VIDEO") {
                             Spacer(modifier = Modifier.width(6.dp))
-                            val isVid = primaryArticle.isVideoPodcast || primaryArticle.mediaType == "VIDEO"
+                            val cardMediaUrl = (primaryArticle.mediaUrl ?: primaryArticle.link).lowercase()
+                            val isAudioMedia = primaryArticle.mediaType == "AUDIO" || cardMediaUrl.contains(".mp3") || cardMediaUrl.contains(".m4a") || cardMediaUrl.contains(".ogg") || cardMediaUrl.contains(".wav")
+                            val isVid = !isAudioMedia && (primaryArticle.isVideoPodcast || primaryArticle.mediaType == "VIDEO" || cardMediaUrl.contains(".mp4") || cardMediaUrl.contains(".m4v"))
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(2.dp))
@@ -658,7 +660,9 @@ fun ArticleCard(
 
                         // Like Story Toggle Button
                         if (primaryArticle.isPodcast || primaryArticle.isVideoPodcast || primaryArticle.mediaType == "AUDIO" || primaryArticle.mediaType == "VIDEO") {
-                            val isVid = primaryArticle.isVideoPodcast || primaryArticle.mediaType == "VIDEO"
+                            val cardMediaUrl = (primaryArticle.mediaUrl ?: primaryArticle.link).lowercase()
+                            val isAudioMedia = primaryArticle.mediaType == "AUDIO" || cardMediaUrl.contains(".mp3") || cardMediaUrl.contains(".m4a") || cardMediaUrl.contains(".ogg") || cardMediaUrl.contains(".wav")
+                            val isVid = !isAudioMedia && (primaryArticle.isVideoPodcast || primaryArticle.mediaType == "VIDEO" || cardMediaUrl.contains(".mp4") || cardMediaUrl.contains(".m4v"))
                             Box(
                                 modifier = Modifier
                                     .testTag("play_podcast_button_${primaryArticle.id}")
@@ -668,7 +672,7 @@ fun ArticleCard(
                                     .padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
                                 Text(
-                                    text = if (isVid) "▶ WATCH VIDEO" else "▶ PLAY PODCAST",
+                                    text = if (isVid) "▶ LISTEN TO PODCAST" else "▶ PLAY PODCAST",
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 10.sp,
                                     color = NothingWhite,

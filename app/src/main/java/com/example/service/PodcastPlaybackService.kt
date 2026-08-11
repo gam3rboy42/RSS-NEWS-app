@@ -5,8 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -23,6 +25,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import android.view.KeyEvent
 import com.example.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -82,6 +85,39 @@ class PodcastPlaybackService : Service(), AudioManager.OnAudioFocusChangeListene
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
     private var updateProgressJob: Job? = null
 
+    private var isNoisyReceiverRegistered = false
+    private val becomingNoisyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (AudioManager.ACTION_AUDIO_BECOMING_NOISY == intent?.action) {
+                Log.d(TAG, "Audio becoming noisy (headset unplugged / Bluetooth disconnected) -> pausing playback")
+                pausePlayback()
+            }
+        }
+    }
+
+    private fun registerNoisyReceiver() {
+        if (!isNoisyReceiverRegistered) {
+            try {
+                val filter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
+                registerReceiver(becomingNoisyReceiver, filter)
+                isNoisyReceiverRegistered = true
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to register becoming noisy receiver", e)
+            }
+        }
+    }
+
+    private fun unregisterNoisyReceiver() {
+        if (isNoisyReceiverRegistered) {
+            try {
+                unregisterReceiver(becomingNoisyReceiver)
+                isNoisyReceiverRegistered = false
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to unregister becoming noisy receiver", e)
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -93,6 +129,19 @@ class PodcastPlaybackService : Service(), AudioManager.OnAudioFocusChangeListene
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent == null) return START_NOT_STICKY
+
+        if (Intent.ACTION_MEDIA_BUTTON == intent.action) {
+            val keyEvent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT) as? KeyEvent
+            }
+            if (keyEvent != null) {
+                mediaSession?.controller?.dispatchMediaButtonEvent(keyEvent)
+            }
+            return START_STICKY
+        }
 
         when (intent.action) {
             ACTION_PLAY_PODCAST -> {
@@ -145,12 +194,69 @@ class PodcastPlaybackService : Service(), AudioManager.OnAudioFocusChangeListene
     }
 
     private fun initMediaSession() {
+        val mediaButtonReceiverIntent = Intent(Intent.ACTION_MEDIA_BUTTON, null, this, PodcastPlaybackService::class.java)
+        val mediaButtonPendingIntent = PendingIntent.getService(
+            this,
+            0,
+            mediaButtonReceiverIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         mediaSession = MediaSession(this, "NothingPodcastMediaSession").apply {
             setFlags(
                 MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or
                         MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS
             )
+            setMediaButtonReceiver(mediaButtonPendingIntent)
             setCallback(object : MediaSession.Callback() {
+                override fun onMediaButtonEvent(mediaButtonIntent: Intent): Boolean {
+                    val event = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        mediaButtonIntent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        mediaButtonIntent.getParcelableExtra(Intent.EXTRA_KEY_EVENT) as? KeyEvent
+                    }
+
+                    if (event != null && event.action == KeyEvent.ACTION_DOWN) {
+                        val keyCode = event.keyCode
+                        Log.d(TAG, "MediaSession.Callback.onMediaButtonEvent received keyCode=$keyCode")
+                        when (keyCode) {
+                            KeyEvent.KEYCODE_MEDIA_PLAY -> {
+                                resumePlayback()
+                                return true
+                            }
+                            KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                                pausePlayback()
+                                return true
+                            }
+                            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                            KeyEvent.KEYCODE_HEADSETHOOK -> {
+                                if (mediaPlayer?.isPlaying == true) {
+                                    pausePlayback()
+                                } else {
+                                    resumePlayback()
+                                }
+                                return true
+                            }
+                            KeyEvent.KEYCODE_MEDIA_NEXT,
+                            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+                                fastForwardPlayback(10000L)
+                                return true
+                            }
+                            KeyEvent.KEYCODE_MEDIA_PREVIOUS,
+                            KeyEvent.KEYCODE_MEDIA_REWIND -> {
+                                rewindPlayback(10000L)
+                                return true
+                            }
+                            KeyEvent.KEYCODE_MEDIA_STOP -> {
+                                stopPlaybackAndCleanUp()
+                                return true
+                            }
+                        }
+                    }
+                    return super.onMediaButtonEvent(mediaButtonIntent)
+                }
+
                 override fun onPlay() {
                     resumePlayback()
                 }
@@ -320,6 +426,7 @@ class PodcastPlaybackService : Service(), AudioManager.OnAudioFocusChangeListene
 
                     preparedMp.start()
                     PodcastPlayerManager.isPlaying.value = true
+                    registerNoisyReceiver()
 
                     updateMediaSessionMetadata()
                     updateMediaSessionState(PlaybackState.STATE_PLAYING)
@@ -392,6 +499,7 @@ class PodcastPlaybackService : Service(), AudioManager.OnAudioFocusChangeListene
                 mp.start()
                 PodcastPlayerManager.isPlaying.value = true
                 PodcastPlayerManager.errorMessage.value = null
+                registerNoisyReceiver()
                 updateMediaSessionState(PlaybackState.STATE_PLAYING)
                 startForegroundNotification()
                 startProgressTracker()
@@ -416,6 +524,7 @@ class PodcastPlaybackService : Service(), AudioManager.OnAudioFocusChangeListene
                     mp.pause()
                 }
                 PodcastPlayerManager.isPlaying.value = false
+                unregisterNoisyReceiver()
                 updateMediaSessionState(PlaybackState.STATE_PAUSED)
                 updateNotification()
                 stopProgressTracker()
@@ -484,6 +593,7 @@ class PodcastPlaybackService : Service(), AudioManager.OnAudioFocusChangeListene
         }
 
         abandonAudioFocus()
+        unregisterNoisyReceiver()
         PodcastPlayerManager.isPlaying.value = false
         PodcastPlayerManager.isBuffering.value = false
         PodcastPlayerManager.currentPositionMs.value = 0L
@@ -836,7 +946,7 @@ class PodcastPlaybackService : Service(), AudioManager.OnAudioFocusChangeListene
     }
 
     override fun onDestroy() {
-
+        unregisterNoisyReceiver()
         stopProgressTracker()
         try {
             mediaPlayer?.release()

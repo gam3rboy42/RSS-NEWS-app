@@ -286,7 +286,9 @@ object RssTopicSearchManager {
                 val title = item.optString("collectionName").ifBlank { item.optString("trackName") }
                 val artist = item.optString("artistName")
                 val genre = item.optString("primaryGenreName")
-                val isVideo = title.lowercase(Locale.ROOT).contains("video") || feedUrl.lowercase(Locale.ROOT).contains("video") || feedUrl.lowercase(Locale.ROOT).contains(".mp4")
+                val lowerTitle = title.lowercase(Locale.ROOT)
+                val lowerFeed = feedUrl.lowercase(Locale.ROOT)
+                val isVideo = lowerFeed.contains(".mp4") || lowerFeed.contains(".m4v") || lowerFeed.contains("video_hd") || lowerTitle.contains("video podcast") || lowerTitle.contains("video netcast") || lowerTitle.contains("vodcast")
 
                 val badge = if (isVideo) "🎥 Video Podcast" else "🎧 Audio Podcast"
                 val desc = "$badge by $artist ($genre). Direct RSS feed."

@@ -85,7 +85,7 @@ fun NothingBottomBar(
                     ScreenRoute.Podcasts -> if (isSelected) Icons.Filled.Headphones else Icons.Outlined.Headphones
                     ScreenRoute.Discover -> if (isSelected) Icons.Filled.Explore else Icons.Outlined.Explore
                     ScreenRoute.Bookmarks -> if (isSelected) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder
-                    ScreenRoute.Settings -> if (isSelected) Icons.Filled.RssFeed else Icons.Outlined.RssFeed
+                    ScreenRoute.Settings -> if (isSelected) Icons.Filled.Settings else Icons.Outlined.Settings
                 }
 
                 Box(

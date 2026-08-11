@@ -70,6 +70,7 @@ import com.example.ui.theme.NothingBlack
 import com.example.ui.theme.NothingBorder
 import com.example.ui.theme.NothingDarkGray
 import com.example.ui.theme.NothingDealOrange
+import com.example.ui.theme.NothingGreen
 import com.example.ui.theme.NothingRed
 import com.example.ui.theme.NothingSurface
 import com.example.ui.theme.NothingTextMuted
@@ -97,6 +98,7 @@ fun SettingsScreen(viewModel: RssViewModel) {
     val onlyPreferred by viewModel.onlyPreferredFeeds.collectAsState()
     val isOnline by viewModel.isOnline.collectAsState()
     val refreshInterval by viewModel.backgroundRefreshIntervalMinutes.collectAsState()
+    val lastSyncTimestamp by viewModel.lastSyncTimestamp.collectAsState()
     val mutedKeywords by viewModel.mutedKeywords.collectAsState()
     val mutedAuthors by viewModel.mutedAuthors.collectAsState()
     val mutedSubcategories by viewModel.mutedSubcategories.collectAsState()
@@ -293,8 +295,65 @@ fun SettingsScreen(viewModel: RssViewModel) {
 
                         Spacer(modifier = Modifier.height(12.dp))
 
+                        // OFFLINE FEED CACHE CARD
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(NothingSurface)
+                                .border(1.dp, NothingBorder, RoundedCornerShape(6.dp))
+                                .padding(12.dp)
+                        ) {
+                            Column {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "OFFLINE FEED CACHE",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 11.sp,
+                                        color = NothingWhite
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(3.dp))
+                                            .background(NothingGreen.copy(alpha = 0.2f))
+                                            .border(1.dp, NothingGreen, RoundedCornerShape(3.dp))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = "ROOM DB ACTIVE",
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 9.sp,
+                                            color = NothingGreen
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Feeds are stored in Room database. On app open, cached feeds load instantly without re-downloading over network.",
+                                    fontSize = 11.sp,
+                                    color = NothingTextMuted
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "LAST SYNCED: ${formatTimeAgoSettings(lastSyncTimestamp)}",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 10.sp,
+                                    color = NothingRed
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
                         Text(
-                            text = "SYNC FREQUENCY",
+                            text = "BACKGROUND SYNC FREQUENCY",
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
                             fontSize = 10.sp,
@@ -302,37 +361,70 @@ fun SettingsScreen(viewModel: RssViewModel) {
                         )
                         Spacer(modifier = Modifier.height(6.dp))
 
-                        val options = listOf(
+                        val optionsRow1 = listOf(
                             15L to "15 MIN",
+                            30L to "30 MIN",
                             60L to "1 HOUR",
-                            180L to "3 HOURS",
+                            180L to "3 HOURS"
+                        )
+                        val optionsRow2 = listOf(
                             360L to "6 HOURS",
+                            720L to "12 HOURS",
+                            1440L to "24 HOURS",
                             0L to "OFF"
                         )
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            options.forEach { (minutes, label) ->
-                                val isSelected = refreshInterval == minutes
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .background(if (isSelected) NothingRed else NothingSurface)
-                                        .border(1.dp, if (isSelected) NothingRed else NothingBorder, RoundedCornerShape(4.dp))
-                                        .clickable { viewModel.setBackgroundRefreshInterval(minutes) }
-                                        .padding(vertical = 8.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = label,
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (isSelected) NothingWhite else NothingTextMuted
-                                    )
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                optionsRow1.forEach { (minutes, label) ->
+                                    val isSelected = refreshInterval == minutes
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(if (isSelected) NothingRed else NothingSurface)
+                                            .border(1.dp, if (isSelected) NothingRed else NothingBorder, RoundedCornerShape(4.dp))
+                                            .clickable { viewModel.setBackgroundRefreshInterval(minutes) }
+                                            .padding(vertical = 8.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isSelected) NothingWhite else NothingTextMuted
+                                        )
+                                    }
+                                }
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                optionsRow2.forEach { (minutes, label) ->
+                                    val isSelected = refreshInterval == minutes
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(if (isSelected) NothingRed else NothingSurface)
+                                            .border(1.dp, if (isSelected) NothingRed else NothingBorder, RoundedCornerShape(4.dp))
+                                            .clickable { viewModel.setBackgroundRefreshInterval(minutes) }
+                                            .padding(vertical = 8.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isSelected) NothingWhite else NothingTextMuted
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1413,4 +1505,16 @@ fun SettingsScreen(viewModel: RssViewModel) {
             }
         )
     }
+}
+
+private fun formatTimeAgoSettings(timestamp: Long): String {
+    if (timestamp <= 0L) return "NEVER SYNCED"
+    val diffMs = System.currentTimeMillis() - timestamp
+    if (diffMs < 60_000L) return "JUST NOW"
+    val mins = diffMs / 60_000L
+    if (mins < 60) return "${mins}M AGO"
+    val hours = mins / 60
+    if (hours < 24) return "${hours}H AGO"
+    val days = hours / 24
+    return "${days}D AGO"
 }

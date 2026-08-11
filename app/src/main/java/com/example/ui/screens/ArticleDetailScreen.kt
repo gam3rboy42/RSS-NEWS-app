@@ -318,7 +318,9 @@ fun ArticleDetailScreen(
 
             // Podcast / Media Action Banner if applicable
             if (article.isPodcast || article.isVideoPodcast || article.mediaType == "AUDIO" || article.mediaType == "VIDEO") {
-                val isVid = article.isVideoPodcast || article.mediaType == "VIDEO"
+                val detailMediaUrl = (article.mediaUrl ?: article.link).lowercase()
+                val isAudioMedia = article.mediaType == "AUDIO" || detailMediaUrl.contains(".mp3") || detailMediaUrl.contains(".m4a") || detailMediaUrl.contains(".ogg") || detailMediaUrl.contains(".wav")
+                val isVid = !isAudioMedia && (article.isVideoPodcast || article.mediaType == "VIDEO" || detailMediaUrl.contains(".mp4") || detailMediaUrl.contains(".m4v"))
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -356,7 +358,7 @@ fun ArticleDetailScreen(
                                 .padding(horizontal = 10.dp, vertical = 6.dp)
                         ) {
                             Text(
-                                text = if (isVid) "▶ WATCH" else "▶ PLAY",
+                                text = if (isVid) "▶ LISTEN TO PODCAST" else "▶ PLAY",
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 11.sp,

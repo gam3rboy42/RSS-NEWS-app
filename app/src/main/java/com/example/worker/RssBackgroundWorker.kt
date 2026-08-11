@@ -140,6 +140,9 @@ class RssBackgroundWorker(
                 )
             }
 
+            val cachePrefs = appContext.getSharedPreferences("rss_cache_prefs", Context.MODE_PRIVATE)
+            cachePrefs.edit().putLong("last_sync_timestamp", System.currentTimeMillis()).apply()
+
             Result.success()
         } catch (e: Exception) {
             Result.retry()

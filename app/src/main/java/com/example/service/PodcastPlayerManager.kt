@@ -32,7 +32,10 @@ object PodcastPlayerManager {
             putExtra(PodcastPlaybackService.EXTRA_MEDIA_URL, article.mediaUrl ?: article.link)
             putExtra(PodcastPlaybackService.EXTRA_IMAGE_URL, article.imageUrl)
             putExtra(PodcastPlaybackService.EXTRA_FEED_URL, article.feedUrl)
-            putExtra(PodcastPlaybackService.EXTRA_IS_VIDEO, article.isVideoPodcast || article.mediaType == "VIDEO")
+            val mediaUrl = (article.mediaUrl ?: article.link).lowercase()
+            val isAudio = article.mediaType == "AUDIO" || mediaUrl.contains(".mp3") || mediaUrl.contains(".m4a") || mediaUrl.contains(".ogg") || mediaUrl.contains(".wav")
+            val isVideo = !isAudio && (article.isVideoPodcast || article.mediaType == "VIDEO" || mediaUrl.contains(".mp4") || mediaUrl.contains(".m4v"))
+            putExtra(PodcastPlaybackService.EXTRA_IS_VIDEO, isVideo)
         }
         startServiceHelper(context, intent)
     }

@@ -69,6 +69,26 @@ class RssRepository(
     val offlineArticles: Flow<List<ArticleEntity>> = rssDao.getOfflineArticles()
     val readArticles: Flow<List<ArticleEntity>> = rssDao.getReadArticles()
 
+    private val cachePrefs = context.getSharedPreferences("rss_cache_prefs", Context.MODE_PRIVATE)
+
+    fun getLastSyncTimestamp(): Long {
+        return cachePrefs.getLong("last_sync_timestamp", 0L)
+    }
+
+    fun updateLastSyncTimestamp(timestamp: Long = System.currentTimeMillis()) {
+        cachePrefs.edit().putLong("last_sync_timestamp", timestamp).apply()
+    }
+
+    suspend fun isCacheValid(cacheValidityMinutes: Long): Boolean {
+        val count = getArticleCount()
+        if (count == 0) return false
+        val lastSync = getLastSyncTimestamp()
+        if (lastSync == 0L) return false
+        val elapsedMs = System.currentTimeMillis() - lastSync
+        val validityMs = cacheValidityMinutes * 60 * 1000L
+        return elapsedMs < validityMs
+    }
+
     private val stopWords = setOf(
         "a", "an", "the", "in", "on", "at", "to", "for", "of", "with", "by", "from",
         "and", "or", "but", "is", "are", "was", "were", "be", "been", "being",
@@ -205,6 +225,8 @@ class RssRepository(
 
             // Generate topic recommendations from liked stories if online
             generateDiscoveredRecommendationsInternal()
+
+            updateLastSyncTimestamp()
 
             SyncState.Success(newArticles.size)
         } catch (e: Exception) {

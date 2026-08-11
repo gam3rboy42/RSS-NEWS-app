@@ -29,7 +29,7 @@ data class ArticleEntity(
     val isDiscoveredRecommendation: Boolean = false,
     val storyClusterHash: String = "", // Normalized hash for stacking identical stories
     val subcategory: String = "", // Auto-analyzed subcategory for smart recommendations
-    val mediaUrl: String? = null, // Audio or Video media file URL (MP3, MP4, M4A, YouTube, etc.)
+    val mediaUrl: String? = null, // Audio or Video media file URL (MP3, MP4, M4A, etc.)
     val mediaType: String? = null, // "AUDIO", "VIDEO"
     val isPodcast: Boolean = false, // Flag indicating podcast audio/video episode
     val isVideoPodcast: Boolean = false, // Flag indicating video podcast

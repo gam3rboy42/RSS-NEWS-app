@@ -163,12 +163,10 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
         com.example.worker.WorkScheduler.getRefreshIntervalMinutes(application)
     )
 
-    init {
-        // Ensure background worker is scheduled if enabled
-        val interval = backgroundRefreshIntervalMinutes.value
-        if (interval > 0) {
-            com.example.worker.WorkScheduler.scheduleBackgroundWork(application, interval)
-        }
+    val lastSyncTimestamp = MutableStateFlow(repository.getLastSyncTimestamp())
+
+    fun updateLastSyncTimestampState() {
+        lastSyncTimestamp.value = repository.getLastSyncTimestamp()
     }
 
     private val _syncState = MutableStateFlow<SyncState>(SyncState.Idle)
@@ -400,12 +398,26 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         customPodcastCategories.value = loadCustomPodcastCategories()
+        val interval = backgroundRefreshIntervalMinutes.value
+        if (interval > 0) {
+            com.example.worker.WorkScheduler.scheduleBackgroundWork(getApplication(), interval)
+        }
         viewModelScope.launch {
             repository.initializeDefaultsIfNeeded()
             checkOnlineStatus()
             com.example.util.PodcastCacheManager.autoPruneIfNecessary(getApplication(), db.rssDao())
             refreshPodcastStorageStats()
-            refreshNews()
+
+            // FEED CACHE CHECK: Do not pull feeds over network if local Room cache is valid
+            val cacheValidityMinutes = if (interval > 0) interval else 60L
+            val isCacheValid = repository.isCacheValid(cacheValidityMinutes)
+
+            if (isCacheValid) {
+                _syncState.value = SyncState.Success(0)
+                updateLastSyncTimestampState()
+            } else {
+                refreshNews()
+            }
         }
     }
 
@@ -419,6 +431,9 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
             _syncState.value = SyncState.Syncing
             val result = repository.refreshFeeds()
             _syncState.value = result
+            if (result is SyncState.Success) {
+                updateLastSyncTimestampState()
+            }
         }
     }
 

@@ -164,13 +164,13 @@ object RssXmlParser {
                             val lowerUrl = url.lowercase(Locale.ROOT)
                             if (type.startsWith("image")) {
                                 if (imageUrl == null) imageUrl = url
-                            } else if (type.startsWith("video") || lowerUrl.contains(".mp4") || lowerUrl.contains(".m4v") || lowerUrl.contains(".webm") || lowerUrl.contains("youtube.com") || lowerUrl.contains("youtu.be")) {
+                            } else if (type.startsWith("audio") || lowerUrl.contains(".mp3") || lowerUrl.contains(".m4a") || lowerUrl.contains(".ogg") || lowerUrl.contains(".wav") || lowerUrl.contains(".aac")) {
                                 mediaUrl = url
-                                mediaType = "VIDEO"
-                            } else if (type.startsWith("audio") || lowerUrl.contains(".mp3") || lowerUrl.contains(".m4a") || lowerUrl.contains(".ogg") || lowerUrl.contains(".wav")) {
+                                mediaType = "AUDIO"
+                            } else if (type.startsWith("video") || lowerUrl.contains(".mp4") || lowerUrl.contains(".m4v") || lowerUrl.contains(".webm")) {
                                 if (mediaUrl == null) {
                                     mediaUrl = url
-                                    mediaType = "AUDIO"
+                                    mediaType = "VIDEO"
                                 }
                             }
                         }
@@ -181,16 +181,18 @@ object RssXmlParser {
                         val url = parser.getAttributeValue(null, "url") ?: ""
                         if (url.isNotBlank()) {
                             val lowerUrl = url.lowercase(Locale.ROOT)
-                            if (type.startsWith("video") || lowerUrl.contains(".mp4") || lowerUrl.contains(".m4v") || lowerUrl.contains("youtube.com")) {
-                                mediaUrl = url
-                                mediaType = "VIDEO"
-                            } else if (type.startsWith("image") || tagName == "media:thumbnail") {
-                                if (imageUrl == null) imageUrl = url
-                            } else if (type.startsWith("audio") || lowerUrl.contains(".mp3") || lowerUrl.contains(".m4a")) {
-                                if (mediaUrl == null) {
+                            if (type.startsWith("audio") || lowerUrl.contains(".mp3") || lowerUrl.contains(".m4a") || lowerUrl.contains(".ogg") || lowerUrl.contains(".wav")) {
+                                if (mediaUrl == null || mediaType != "AUDIO") {
                                     mediaUrl = url
                                     mediaType = "AUDIO"
                                 }
+                            } else if (type.startsWith("video") || lowerUrl.contains(".mp4") || lowerUrl.contains(".m4v")) {
+                                if (mediaUrl == null) {
+                                    mediaUrl = url
+                                    mediaType = "VIDEO"
+                                }
+                            } else if (type.startsWith("image") || tagName == "media:thumbnail") {
+                                if (imageUrl == null) imageUrl = url
                             }
                         }
                         skipTag(parser)
@@ -211,12 +213,25 @@ object RssXmlParser {
         val analyzedSubcat = com.example.data.model.SubcategoryAnalyzer.analyze(title, cleanDesc, category)
 
         val lowerLink = finalLink.lowercase(Locale.ROOT)
-        val isVideo = mediaType == "VIDEO" || lowerLink.contains("youtube.com/watch") || lowerLink.contains("youtu.be") || lowerLink.contains(".mp4") || lowerLink.contains(".m4v")
-        val isAudio = mediaType == "AUDIO" || lowerLink.contains(".mp3") || lowerLink.contains(".m4a")
+        val lowerMediaUrl = (mediaUrl ?: "").lowercase(Locale.ROOT)
+
+        val isAudio = mediaType == "AUDIO" ||
+                lowerMediaUrl.contains(".mp3") || lowerMediaUrl.contains(".m4a") ||
+                lowerMediaUrl.contains(".ogg") || lowerMediaUrl.contains(".wav") ||
+                lowerMediaUrl.contains(".aac") || lowerMediaUrl.contains(".flac") ||
+                lowerLink.contains(".mp3") || lowerLink.contains(".m4a")
+
+        val isVideo = !isAudio && (
+                mediaType == "VIDEO" ||
+                lowerMediaUrl.contains(".mp4") || lowerMediaUrl.contains(".m4v") ||
+                lowerMediaUrl.contains(".webm") || lowerLink.contains(".mp4") ||
+                lowerLink.contains(".m4v")
+        )
+
         val isPodcastItem = category.equals("PODCASTS", ignoreCase = true) || isVideo || isAudio || mediaType == "AUDIO" || mediaType == "VIDEO" || !duration.isNullOrBlank()
 
         val finalMediaUrl = mediaUrl ?: if (isVideo || isAudio) finalLink else null
-        val finalMediaType = if (isVideo) "VIDEO" else if (isAudio) "AUDIO" else mediaType
+        val finalMediaType = if (isAudio) "AUDIO" else if (isVideo) "VIDEO" else mediaType
 
         return ArticleEntity(
             id = articleId,
@@ -339,8 +354,7 @@ object RssXmlParser {
         val cleanDesc = summary.ifBlank { content.take(200) }.trim()
         val analyzedSubcat = com.example.data.model.SubcategoryAnalyzer.analyze(title, cleanDesc, category)
 
-        val isYouTube = link.contains("youtube.com") || link.contains("youtu.be") || feedUrl.contains("youtube.com")
-        val isVideo = isYouTube || link.endsWith(".mp4") || link.endsWith(".m4v")
+        val isVideo = link.endsWith(".mp4") || link.endsWith(".m4v")
         val isAudio = link.endsWith(".mp3") || link.endsWith(".m4a")
         val isPodcastItem = category.equals("PODCASTS", ignoreCase = true) || isVideo || isAudio
 
