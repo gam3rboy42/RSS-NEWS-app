@@ -159,19 +159,21 @@ object RssXmlParser {
                     tagName == "pubdate" || tagName == "dc:date" || tagName == "published" || tagName == "updated" -> pubDateStr = readText(parser)
                     tagName == "enclosure" -> {
                         val type = parser.getAttributeValue(null, "type")?.lowercase(Locale.ROOT) ?: ""
-                        val url = parser.getAttributeValue(null, "url") ?: ""
+                        var url = parser.getAttributeValue(null, "url") ?: ""
                         if (url.isNotBlank()) {
+                            url = url.replace("&amp;", "&").trim()
                             val lowerUrl = url.lowercase(Locale.ROOT)
                             if (type.startsWith("image")) {
                                 if (imageUrl == null) imageUrl = url
-                            } else if (type.startsWith("audio") || lowerUrl.contains(".mp3") || lowerUrl.contains(".m4a") || lowerUrl.contains(".ogg") || lowerUrl.contains(".wav") || lowerUrl.contains(".aac")) {
-                                mediaUrl = url
-                                mediaType = "AUDIO"
                             } else if (type.startsWith("video") || lowerUrl.contains(".mp4") || lowerUrl.contains(".m4v") || lowerUrl.contains(".webm")) {
                                 if (mediaUrl == null) {
                                     mediaUrl = url
                                     mediaType = "VIDEO"
                                 }
+                            } else {
+                                // Default for non-image enclosures in RSS: audio podcast media (supports audio/*, application/octet-stream, Patreon auth urls, etc.)
+                                mediaUrl = url
+                                mediaType = "AUDIO"
                             }
                         }
                         skipTag(parser)
@@ -477,7 +479,7 @@ object RssXmlParser {
     private fun parsePubDate(dateStr: String): Long {
         if (dateStr.isBlank()) return System.currentTimeMillis()
         val cleanDateStr = dateStr.trim()
-        val formatters = THREAD_LOCAL_FORMATS.get()
+        val formatters = THREAD_LOCAL_FORMATS.get() ?: emptyList()
         for (sdf in formatters) {
             try {
                 val date = sdf.parse(cleanDateStr)

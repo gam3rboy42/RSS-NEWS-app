@@ -9,12 +9,15 @@ import com.example.data.local.ArticleEntity
 import com.example.data.local.RssDao
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.Cookie
+import okhttp3.CookieJar
+import okhttp3.HttpUrl
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
-import java.io.InputStream
-import java.net.HttpURLConnection
-import java.net.URL
 import java.security.MessageDigest
+import java.util.concurrent.TimeUnit
 
 data class PodcastStorageStats(
     val totalBytes: Long,
@@ -49,6 +52,25 @@ object PodcastCacheManager {
     private const val DEFAULT_PRUNE_AGE_DAYS = 30
     private const val DEFAULT_AUTO_DOWNLOAD_WIFI = true
 
+    val downloadClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(90, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .cookieJar(object : CookieJar {
+                private val cookieStore = HashMap<String, List<Cookie>>()
+                override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+                    cookieStore[url.host] = cookies
+                }
+                override fun loadForRequest(url: HttpUrl): List<Cookie> {
+                    return cookieStore[url.host] ?: emptyList()
+                }
+            })
+            .build()
+    }
+
     fun getCacheDir(context: Context): File {
         val dir = File(context.cacheDir, "podcast_cache")
         if (!dir.exists()) {
@@ -68,20 +90,46 @@ object PodcastCacheManager {
     }
 
     fun isAudioFileValid(file: File): Boolean {
-        if (!file.exists() || file.length() < 50 * 1024) return false
+        if (!file.exists() || file.length() < 30 * 1024) return false
         val retriever = android.media.MediaMetadataRetriever()
-        return try {
+        try {
             retriever.setDataSource(file.absolutePath)
             val durStr = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
             val durationMs = durStr?.toLongOrNull() ?: 0L
-            durationMs > 0L
+            if (durationMs > 0L) return true
         } catch (e: Exception) {
-            Log.e(TAG, "Audio validation check failed for ${file.name}: ${e.message}")
-            false
+            Log.w(TAG, "MediaMetadataRetriever could not parse duration for ${file.name}: ${e.message}")
         } finally {
             try {
                 retriever.release()
             } catch (_: Exception) {}
+        }
+
+        // Secondary validation fallback: inspect header magic bytes to verify legitimate binary audio
+        return try {
+            val bytes = ByteArray(512)
+            val readCount = file.inputStream().use { it.read(bytes) }
+            if (readCount < 10) return false
+
+            val headerStr = String(bytes, 0, minOf(readCount, 256), Charsets.ISO_8859_1).lowercase()
+            // Reject HTML error responses disguised as audio files
+            if (headerStr.contains("<html") || headerStr.contains("<!doctype") || headerStr.contains("<head") || headerStr.contains("{\"error\"")) {
+                Log.e(TAG, "File ${file.name} is an HTML error response, not audio")
+                return false
+            }
+
+            // Check known audio header signatures
+            val isId3 = bytes[0] == 'I'.code.toByte() && bytes[1] == 'D'.code.toByte() && bytes[2] == '3'.code.toByte()
+            val isMp3Sync = (bytes[0].toInt() and 0xFF) == 0xFF && ((bytes[1].toInt() and 0xE0) == 0xE0)
+            val isM4a = headerStr.contains("ftyp")
+            val isOgg = bytes[0] == 'O'.code.toByte() && bytes[1] == 'g'.code.toByte() && bytes[2] == 'g'.code.toByte() && bytes[3] == 'S'.code.toByte()
+            val isWav = bytes[0] == 'R'.code.toByte() && bytes[1] == 'I'.code.toByte() && bytes[2] == 'F'.code.toByte() && bytes[3] == 'F'.code.toByte()
+            val isFlac = bytes[0] == 'f'.code.toByte() && bytes[1] == 'L'.code.toByte() && bytes[2] == 'a'.code.toByte() && bytes[3] == 'C'.code.toByte()
+
+            isId3 || isMp3Sync || isM4a || isOgg || isWav || isFlac || file.length() >= 64 * 1024
+        } catch (e: Exception) {
+            Log.e(TAG, "Header check failed: ${e.message}")
+            file.length() >= 64 * 1024
         }
     }
 
@@ -213,8 +261,8 @@ object PodcastCacheManager {
         article: ArticleEntity,
         onProgress: (Float) -> Unit = {}
     ): File? = withContext(Dispatchers.IO) {
-        val mediaUrl = article.mediaUrl ?: article.link
-        if (mediaUrl.isBlank()) return@withContext null
+        val initialMediaUrl = article.mediaUrl ?: article.link
+        if (initialMediaUrl.isBlank()) return@withContext null
 
         val targetFile = File(getCacheDir(context), "${hashId(article.id)}.mp3")
         if (targetFile.exists() && isAudioFileValid(targetFile)) {
@@ -224,63 +272,66 @@ object PodcastCacheManager {
         }
 
         val tempFile = File(getCacheDir(context), "${hashId(article.id)}.tmp")
-        var connection: HttpURLConnection? = null
-        try {
-            val url = URL(mediaUrl)
-            connection = url.openConnection() as HttpURLConnection
-            connection.connectTimeout = 15000
-            connection.readTimeout = 15000
-            connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) Chrome/120.0")
-            connection.connect()
+        if (tempFile.exists()) tempFile.delete()
 
-            if (connection.responseCode != HttpURLConnection.HTTP_OK) {
-                Log.e(TAG, "Download failed with code: ${connection.responseCode}")
+        val browserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+
+        try {
+            val request = Request.Builder()
+                .url(initialMediaUrl)
+                .header("User-Agent", browserUserAgent)
+                .header("Accept", "audio/*, */*;q=0.9")
+                .header("Accept-Encoding", "identity")
+                .header("Connection", "keep-alive")
+                .build()
+
+            val response = downloadClient.newCall(request).execute()
+            if (!response.isSuccessful || response.body == null) {
+                Log.e(TAG, "Download failed with HTTP code ${response.code} for ${article.title}")
+                response.close()
                 return@withContext null
             }
 
-            val fileLength = connection.contentLengthLong
-            val input: InputStream = connection.inputStream
-            val output = FileOutputStream(tempFile)
+            val body = response.body!!
+            val fileLength = body.contentLength()
+            val inputStream = body.byteStream()
+            val outputStream = FileOutputStream(tempFile)
 
-            val data = ByteArray(8192)
-            var total: Long = 0
-            var count: Int
-            while (input.read(data).also { count = it } != -1) {
-                total += count.toLong()
-                if (fileLength > 0) {
-                    onProgress(total.toFloat() / fileLength.toFloat())
+            val data = ByteArray(16384)
+            var totalBytesRead = 0L
+            var readCount: Int
+
+            inputStream.use { input ->
+                outputStream.use { output ->
+                    while (input.read(data).also { readCount = it } != -1) {
+                        totalBytesRead += readCount
+                        output.write(data, 0, readCount)
+                        if (fileLength > 0) {
+                            onProgress((totalBytesRead.toFloat() / fileLength.toFloat()).coerceIn(0f, 1f))
+                        }
+                    }
+                    output.flush()
                 }
-                output.write(data, 0, count)
             }
+            response.close()
 
-            output.flush()
-            output.close()
-            input.close()
-
-            if (tempFile.renameTo(targetFile) || targetFile.exists()) {
-                if (isAudioFileValid(targetFile)) {
-                    Log.d(TAG, "Podcast audio successfully cached & validated: ${targetFile.absolutePath} (${targetFile.length()} bytes)")
+            if (tempFile.exists() && isAudioFileValid(tempFile)) {
+                if (targetFile.exists()) targetFile.delete()
+                if (tempFile.renameTo(targetFile)) {
+                    Log.d(TAG, "Successfully downloaded and validated: ${targetFile.name} (${targetFile.length()} bytes)")
                     return@withContext targetFile
                 } else {
-                    Log.e(TAG, "Downloaded podcast failed audio validation check! Deleting invalid/corrupted file.")
-                    if (targetFile.exists()) targetFile.delete()
-                    if (tempFile.exists()) tempFile.delete()
-                    return@withContext null
+                    return@withContext tempFile
                 }
             } else {
-                if (isAudioFileValid(tempFile)) {
-                    return@withContext tempFile
-                } else {
-                    if (tempFile.exists()) tempFile.delete()
-                    return@withContext null
-                }
+                Log.e(TAG, "Downloaded file failed audio validation for ${article.title}. Temp length=${tempFile.length()}")
+                if (tempFile.exists()) tempFile.delete()
+                return@withContext null
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error downloading podcast audio: ${e.message}", e)
+            Log.e(TAG, "Error during podcast download for ${article.title}: ${e.message}", e)
             if (tempFile.exists()) tempFile.delete()
             return@withContext null
-        } finally {
-            connection?.disconnect()
         }
     }
 

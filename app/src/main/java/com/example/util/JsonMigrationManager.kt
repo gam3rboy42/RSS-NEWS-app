@@ -12,7 +12,8 @@ import java.util.Locale
 data class JsonImportResult(
     val importedFeedsCount: Int,
     val totalFeedsInFile: Int,
-    val importedTagsCount: Int
+    val importedTagsCount: Int,
+    val removedFeedsCount: Int = 0
 )
 
 object JsonMigrationManager {
@@ -92,7 +93,14 @@ object JsonMigrationManager {
         var tagsCount = 0
 
         try {
-            val root = JSONObject(jsonString)
+            val trimmedJson = jsonString.trim()
+            val root = if (trimmedJson.startsWith("[")) {
+                JSONObject().apply {
+                    put("feeds", JSONArray(trimmedJson))
+                }
+            } else {
+                JSONObject(trimmedJson)
+            }
             
             if (root.has("tags")) {
                 val tagsArr = root.getJSONArray("tags")

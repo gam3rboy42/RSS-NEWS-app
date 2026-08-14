@@ -841,26 +841,55 @@ class RssRepository(
         com.example.util.JsonMigrationManager.exportFeedsToJson(context, feeds)
     }
 
-    suspend fun importFeedsFromJson(jsonString: String): com.example.util.JsonImportResult = withContext(Dispatchers.IO) {
+    suspend fun importFeedsFromJson(
+        jsonString: String,
+        removeFeedsNotInJson: Boolean = true
+    ): com.example.util.JsonImportResult = withContext(Dispatchers.IO) {
         val (feeds, result) = com.example.util.JsonMigrationManager.parseJsonBackup(context, jsonString)
+        
+        fun normalizeUrl(u: String): String {
+            return u.trim().lowercase().removeSuffix("/")
+        }
+
+        var removedCount = 0
+        if (removeFeedsNotInJson && feeds.isNotEmpty()) {
+            val incomingUrls = feeds.map { normalizeUrl(it.url) }.toSet()
+            val existingFeeds = rssDao.getAllFeedsList()
+            for (existing in existingFeeds) {
+                val existingNorm = normalizeUrl(existing.url)
+                if (existingNorm !in incomingUrls) {
+                    rssDao.deleteFeedByUrl(existing.url)
+                    val altUrl = if (existing.url.endsWith("/")) existing.url.dropLast(1) else "${existing.url}/"
+                    rssDao.deleteFeedByUrl(altUrl)
+                    rssDao.deleteNonSavedArticlesByFeedUrl(existing.url)
+                    rssDao.deleteNonSavedArticlesByFeedUrl(altUrl)
+                    removedCount++
+                }
+            }
+        }
+
         var newCount = 0
         for (feed in feeds) {
             val existing = rssDao.getFeedByUrl(feed.url)
+                ?: rssDao.getFeedByUrl(if (feed.url.endsWith("/")) feed.url.dropLast(1) else "${feed.url}/")
             if (existing == null) {
                 rssDao.insertFeed(feed)
                 newCount++
             } else {
-                // Update existing feed category/tags if imported feed has custom tags
-                if (existing.category.isBlank() || existing.category == "GENERAL" || existing.category == "UNCATEGORIZED") {
-                    val updated = existing.copy(
-                        category = feed.category,
-                        isPreferred = existing.isPreferred || feed.isPreferred
-                    )
-                    rssDao.insertFeed(updated)
-                }
+                // Update existing feed details from JSON
+                val updated = existing.copy(
+                    title = if (feed.title.isNotBlank() && feed.title != "Feed") feed.title else existing.title,
+                    category = if (feed.category.isNotBlank() && feed.category != "GENERAL" && feed.category != "UNCATEGORIZED") feed.category else existing.category,
+                    description = if (feed.description.isNotBlank()) feed.description else existing.description,
+                    iconUrl = if (feed.iconUrl.isNotBlank()) feed.iconUrl else existing.iconUrl,
+                    isPreferred = feed.isPreferred,
+                    isEnabled = feed.isEnabled,
+                    isCustom = feed.isCustom
+                )
+                rssDao.insertFeed(updated)
             }
         }
-        result.copy(importedFeedsCount = newCount)
+        result.copy(importedFeedsCount = newCount, removedFeedsCount = removedCount)
     }
 
     suspend fun importOpmlXml(xmlContent: String): Int = withContext(Dispatchers.IO) {

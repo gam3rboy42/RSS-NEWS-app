@@ -124,6 +124,7 @@ fun SettingsScreen(viewModel: RssViewModel) {
     var jsonExportStringForSave by remember { mutableStateOf("") }
     var showJsonPreviewDialog by remember { mutableStateOf(false) }
     var exportedJsonText by remember { mutableStateOf("") }
+    var removeFeedsNotInJsonOnSave by remember { mutableStateOf(true) }
 
     val createJsonFileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
@@ -148,10 +149,16 @@ fun SettingsScreen(viewModel: RssViewModel) {
                 context.contentResolver.openInputStream(uri)?.use { inputStream ->
                     val content = inputStream.bufferedReader().readText()
                     scope.launch {
-                        val res = viewModel.importFeedsFromJson(content)
+                        val res = viewModel.importFeedsFromJson(content, removeFeedsNotInJson = removeFeedsNotInJsonOnSave)
+                        val msg = buildString {
+                            append("Imported ${res.totalFeedsInFile} feed(s) from JSON backup")
+                            if (res.removedFeedsCount > 0) {
+                                append(", removed ${res.removedFeedsCount} omitted feed(s)")
+                            }
+                        }
                         Toast.makeText(
                             context,
-                            "Imported ${res.importedFeedsCount} feed(s) and tag rules from JSON backup!",
+                            msg,
                             Toast.LENGTH_LONG
                         ).show()
                     }
@@ -936,6 +943,47 @@ fun SettingsScreen(viewModel: RssViewModel) {
                             color = NothingTextMuted
                         )
 
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Toggle: Remove Feeds Not in JSON
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(NothingBlack.copy(alpha = 0.5f))
+                                .clickable { removeFeedsNotInJsonOnSave = !removeFeedsNotInJsonOnSave }
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "REMOVE FEEDS NOT IN JSON",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    color = if (removeFeedsNotInJsonOnSave) NothingRed else NothingWhite
+                                )
+                                Text(
+                                    text = "When importing or applying JSON, remove existing feeds that are omitted from the JSON backup.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = NothingTextMuted,
+                                    fontSize = 10.sp
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Switch(
+                                checked = removeFeedsNotInJsonOnSave,
+                                onCheckedChange = { removeFeedsNotInJsonOnSave = it },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = NothingWhite,
+                                    checkedTrackColor = NothingRed,
+                                    uncheckedThumbColor = NothingTextMuted,
+                                    uncheckedTrackColor = NothingSurface
+                                )
+                            )
+                        }
+
                         Spacer(modifier = Modifier.height(12.dp))
 
                         // Primary JSON Export / Import Row
@@ -969,7 +1017,7 @@ fun SettingsScreen(viewModel: RssViewModel) {
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = "SAVE JSON TO DEVICE",
+                                        text = "SAVE JSON TO FILE",
                                         fontFamily = FontFamily.Monospace,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 10.sp
@@ -1034,7 +1082,7 @@ fun SettingsScreen(viewModel: RssViewModel) {
                                     .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
                             ) {
                                 Text(
-                                    text = "PREVIEW / SHARE JSON",
+                                    text = "PREVIEW / EDIT JSON",
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 10.sp
                                 )
@@ -1254,7 +1302,7 @@ fun SettingsScreen(viewModel: RssViewModel) {
         }
     }
 
-    // Export JSON Preview Dialog
+    // Export/Edit JSON Dialog
     if (showJsonPreviewDialog) {
         AlertDialog(
             onDismissRequest = { showJsonPreviewDialog = false },
@@ -1270,15 +1318,15 @@ fun SettingsScreen(viewModel: RssViewModel) {
             text = {
                 Column {
                     Text(
-                        text = "100% Private, On-Device JSON Export containing your feeds, categories, tags, and auto-tagger rules:",
+                        text = "100% Private, On-Device JSON backup. You can edit the JSON text directly below and apply changes to your feeds list:",
                         style = MaterialTheme.typography.bodyMedium,
                         color = NothingTextMuted
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(
                         value = exportedJsonText,
-                        onValueChange = {},
-                        readOnly = true,
+                        onValueChange = { exportedJsonText = it },
+                        readOnly = false,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(200.dp),
@@ -1289,19 +1337,75 @@ fun SettingsScreen(viewModel: RssViewModel) {
                             unfocusedTextColor = NothingWhite
                         )
                     )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { removeFeedsNotInJsonOnSave = !removeFeedsNotInJsonOnSave },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Switch(
+                            checked = removeFeedsNotInJsonOnSave,
+                            onCheckedChange = { removeFeedsNotInJsonOnSave = it },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = NothingWhite,
+                                checkedTrackColor = NothingRed,
+                                uncheckedThumbColor = NothingTextMuted,
+                                uncheckedTrackColor = NothingSurface
+                            )
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Remove feeds omitted from JSON",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = NothingWhite,
+                            fontSize = 11.sp
+                        )
+                    }
                 }
             },
             confirmButton = {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            if (exportedJsonText.isNotBlank()) {
+                                scope.launch {
+                                    val res = viewModel.importFeedsFromJson(
+                                        exportedJsonText,
+                                        removeFeedsNotInJson = removeFeedsNotInJsonOnSave
+                                    )
+                                    val msg = buildString {
+                                        append("Saved & applied: ${res.totalFeedsInFile} feed(s) in JSON")
+                                        if (res.removedFeedsCount > 0) {
+                                            append(" (${res.removedFeedsCount} removed)")
+                                        }
+                                    }
+                                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                    showJsonPreviewDialog = false
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = NothingRed),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("APPLY & SAVE", fontFamily = FontFamily.Monospace, color = NothingWhite, fontSize = 10.sp)
+                    }
+
                     Button(
                         onClick = {
                             jsonExportStringForSave = exportedJsonText
                             showJsonPreviewDialog = false
                             createJsonFileLauncher.launch("nothing_rss_feeds_backup.json")
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = NothingRed)
+                        colors = ButtonDefaults.buttonColors(containerColor = NothingSurface),
+                        modifier = Modifier
+                            .weight(1f)
+                            .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
                     ) {
-                        Text("SAVE FILE", fontFamily = FontFamily.Monospace, color = NothingWhite, fontSize = 11.sp)
+                        Text("SAVE FILE", fontFamily = FontFamily.Monospace, color = NothingWhite, fontSize = 10.sp)
                     }
 
                     Button(
@@ -1314,9 +1418,12 @@ fun SettingsScreen(viewModel: RssViewModel) {
                             context.startActivity(Intent.createChooser(shareIntent, "Share JSON Backup"))
                             showJsonPreviewDialog = false
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = NothingSurface)
+                        colors = ButtonDefaults.buttonColors(containerColor = NothingSurface),
+                        modifier = Modifier
+                            .weight(0.8f)
+                            .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
                     ) {
-                        Text("SHARE", fontFamily = FontFamily.Monospace, color = NothingWhite, fontSize = 11.sp)
+                        Text("SHARE", fontFamily = FontFamily.Monospace, color = NothingWhite, fontSize = 10.sp)
                     }
                 }
             },

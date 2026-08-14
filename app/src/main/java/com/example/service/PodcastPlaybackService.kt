@@ -296,57 +296,26 @@ class PodcastPlaybackService : Service(), AudioManager.OnAudioFocusChangeListene
     private var prepareJob: Job? = null
 
     private suspend fun resolveDirectStreamUrl(initialUrl: String): String = withContext(Dispatchers.IO) {
-        var urlString = initialUrl
-        val maxRedirects = 5
-        var redirectCount = 0
-        val browserUserAgent = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+        val browserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        var finalUrl = initialUrl
 
-        while (redirectCount < maxRedirects) {
-            var connection: HttpURLConnection? = null
-            try {
-                val url = URL(urlString)
-                connection = url.openConnection() as HttpURLConnection
-                connection.requestMethod = "HEAD"
-                connection.connectTimeout = 6000
-                connection.readTimeout = 6000
-                connection.instanceFollowRedirects = false
-                connection.setRequestProperty("User-Agent", browserUserAgent)
-                connection.setRequestProperty("Accept", "*/*")
+        try {
+            val request = okhttp3.Request.Builder()
+                .url(initialUrl)
+                .header("User-Agent", browserUserAgent)
+                .header("Accept", "audio/*, */*;q=0.9")
+                .header("Range", "bytes=0-2048")
+                .header("Connection", "keep-alive")
+                .build()
 
-                var responseCode = connection.responseCode
-                if (responseCode == HttpURLConnection.HTTP_BAD_METHOD || responseCode == HttpURLConnection.HTTP_FORBIDDEN || responseCode == 405) {
-                    connection.disconnect()
-                    val urlGet = URL(urlString)
-                    connection = urlGet.openConnection() as HttpURLConnection
-                    connection.requestMethod = "GET"
-                    connection.connectTimeout = 6000
-                    connection.readTimeout = 6000
-                    connection.instanceFollowRedirects = false
-                    connection.setRequestProperty("User-Agent", browserUserAgent)
-                    connection.setRequestProperty("Accept", "*/*")
-                    responseCode = connection.responseCode
-                }
-
-                if (responseCode in 300..399) {
-                    val location = connection.getHeaderField("Location")
-                    if (!location.isNullOrBlank()) {
-                        urlString = if (location.startsWith("http://") || location.startsWith("https://")) {
-                            location
-                        } else {
-                            URL(url, location).toString()
-                        }
-                        redirectCount++
-                        continue
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Error resolving redirect for $urlString: ${e.message}")
-            } finally {
-                connection?.disconnect()
-            }
-            break
+            val response = com.example.util.PodcastCacheManager.downloadClient.newCall(request).execute()
+            finalUrl = response.request.url.toString()
+            response.close()
+            Log.d(TAG, "Resolved direct podcast stream URL: $initialUrl -> $finalUrl")
+        } catch (e: Exception) {
+            Log.w(TAG, "Error resolving direct stream URL for $initialUrl: ${e.message}")
         }
-        return@withContext urlString
+        finalUrl
     }
 
     private fun playNewPodcast(url: String) {
@@ -381,12 +350,12 @@ class PodcastPlaybackService : Service(), AudioManager.OnAudioFocusChangeListene
             mediaPlayer = mp
 
             val timeoutJob = launch {
-                delay(20000L) // 20 seconds buffer timeout
+                delay(60000L) // 60 seconds buffer timeout for high-bitrate/secure CDN streams
                 if (PodcastPlayerManager.isBuffering.value) {
                     Log.e(TAG, "Media preparation timed out")
                     PodcastPlayerManager.isBuffering.value = false
                     PodcastPlayerManager.isPlaying.value = false
-                    PodcastPlayerManager.errorMessage.value = "Audio stream loading timed out. Tap play to retry or open web link."
+                    PodcastPlayerManager.errorMessage.value = "Audio stream buffering timed out. Tap play to retry, download offline, or open web link."
                     try {
                         mp.reset()
                         mp.release()
@@ -402,8 +371,9 @@ class PodcastPlaybackService : Service(), AudioManager.OnAudioFocusChangeListene
                 } else {
                     val resolvedUrl = resolveDirectStreamUrl(url)
                     val headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-                        "Accept" to "*/*"
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                        "Accept" to "*/*",
+                        "Connection" to "keep-alive"
                     )
                     mp.setDataSource(applicationContext, Uri.parse(resolvedUrl), headers)
                 }

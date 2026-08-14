@@ -143,6 +143,9 @@ interface RssDao {
     @Query("UPDATE articles SET isRead = 0")
     suspend fun clearReadHistory()
 
+    @Query("DELETE FROM articles WHERE feedUrl = :feedUrl AND isBookmarked = 0 AND isSavedForOffline = 0 AND isLiked = 0")
+    suspend fun deleteNonSavedArticlesByFeedUrl(feedUrl: String)
+
     @Query("DELETE FROM articles WHERE isBookmarked = 0 AND isSavedForOffline = 0 AND isLiked = 0 AND isRead = 0")
     suspend fun clearNonBookmarkedArticles()
 

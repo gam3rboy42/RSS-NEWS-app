@@ -118,11 +118,7 @@ fun PodcastMediaDialog(
 
     val mediaUrl = currentArticleState.mediaUrl ?: currentArticleState.link
     val lowerMediaUrl = mediaUrl.lowercase()
-    val isAudioMedia = currentArticleState.mediaType == "AUDIO" ||
-            lowerMediaUrl.contains(".mp3") || lowerMediaUrl.contains(".m4a") ||
-            lowerMediaUrl.contains(".ogg") || lowerMediaUrl.contains(".wav") ||
-            lowerMediaUrl.contains(".aac") || lowerMediaUrl.contains(".flac")
-    val isVideo = !isAudioMedia && (currentArticleState.isVideoPodcast || currentArticleState.mediaType == "VIDEO" || lowerMediaUrl.contains(".mp4") || lowerMediaUrl.contains(".m4v") || lowerMediaUrl.contains(".webm"))
+    val isVideo = currentArticleState.isVideoPodcast || currentArticleState.mediaType == "VIDEO" || (currentArticleState.mediaType != "AUDIO" && (lowerMediaUrl.contains(".mp4") || lowerMediaUrl.contains(".m4v") || lowerMediaUrl.contains(".webm")))
 
     // Collect global background podcast state
     val activeArticle by PodcastPlayerManager.activeArticle.collectAsState()

@@ -880,9 +880,9 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
         return repository.exportFeedsToJson()
     }
 
-    suspend fun importFeedsFromJson(json: String): com.example.util.JsonImportResult {
-        val result = repository.importFeedsFromJson(json)
-        if (result.importedFeedsCount > 0) {
+    suspend fun importFeedsFromJson(json: String, removeFeedsNotInJson: Boolean = true): com.example.util.JsonImportResult {
+        val result = repository.importFeedsFromJson(json, removeFeedsNotInJson)
+        if (result.importedFeedsCount > 0 || result.removedFeedsCount > 0) {
             refreshNews()
         }
         return result
