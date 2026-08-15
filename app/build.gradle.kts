@@ -2,6 +2,7 @@ import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesS
 
 plugins {
   alias(libs.plugins.android.application)
+  alias(libs.plugins.kotlin.android)
   alias(libs.plugins.kotlin.compose)
   alias(libs.plugins.google.devtools.ksp)
   alias(libs.plugins.roborazzi)
@@ -43,8 +44,11 @@ android {
     debug { }
   }
   compileOptions {
-    sourceCompatibility = JavaVersion.VERSION_11
-    targetCompatibility = JavaVersion.VERSION_11
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+  }
+  kotlinOptions {
+    jvmTarget = "17"
   }
   buildFeatures {
     compose = true
@@ -93,6 +97,7 @@ dependencies {
   implementation(libs.okhttp)
   implementation(libs.retrofit)
 
+  testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.junit)
   testImplementation(libs.kotlinx.coroutines.test)
@@ -112,4 +117,11 @@ dependencies {
 
   "ksp"(libs.androidx.room.compiler)
   "ksp"(libs.moshi.kotlin.codegen)
+}
+
+// Fix for Gradle 9.3.0 and AGP 8.8.2: Some tools expect unitTestClasses task
+tasks.register("unitTestClasses") {
+  description = "Assembles all unit test classes."
+  group = "build"
+  dependsOn(tasks.matching { it.name.contains("UnitTest") && it.name.contains("compile") })
 }
