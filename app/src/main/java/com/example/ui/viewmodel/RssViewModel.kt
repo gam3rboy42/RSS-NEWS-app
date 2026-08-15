@@ -671,6 +671,19 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun cycleFeedPreferred(feedUrl: String, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            val res = repository.cycleFeedPreferred(feedUrl)
+            onResult(res.first, res.second)
+        }
+    }
+
+    fun setFeedPreferredWithScope(feedUrl: String, isPreferred: Boolean, preferredScope: String) {
+        viewModelScope.launch {
+            repository.setFeedPreferredWithScope(feedUrl, isPreferred, preferredScope)
+        }
+    }
+
     fun updateFeedCategory(feedUrl: String, newCategory: String) {
         viewModelScope.launch {
             repository.updateFeedCategory(feedUrl, newCategory)
@@ -696,10 +709,19 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
         newTitle: String,
         newUrl: String,
         newCategory: String,
+        newIsPreferred: Boolean = oldFeed.isPreferred,
+        newPreferredScope: String = oldFeed.preferredScope,
         onResult: (Boolean) -> Unit = {}
     ) {
         viewModelScope.launch {
-            val success = repository.updateFeedDetails(oldFeed, newTitle, newUrl, newCategory)
+            val success = repository.updateFeedDetails(
+                oldFeed = oldFeed,
+                newTitle = newTitle,
+                newUrl = newUrl,
+                newCategory = newCategory,
+                newIsPreferred = newIsPreferred,
+                newPreferredScope = newPreferredScope
+            )
             if (success) {
                 refreshNews()
             }

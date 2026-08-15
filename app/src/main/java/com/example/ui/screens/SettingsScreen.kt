@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
@@ -721,7 +722,7 @@ fun SettingsScreen(viewModel: RssViewModel) {
                     color = NothingWhite
                 )
                 Text(
-                    text = "Stories from preferred feeds are ranked higher and chosen first in stacked coverage.",
+                    text = "Tap star to cycle: [OFF] -> [★ CATEGORY ONLY] -> [★ ALL FEEDS]. Category-only sources boost their specific folder without crowding your main All Feed.",
                     style = MaterialTheme.typography.labelSmall,
                     color = NothingTextMuted
                 )
@@ -784,14 +785,16 @@ fun SettingsScreen(viewModel: RssViewModel) {
 
                                 if (feed.isPreferred) {
                                     Spacer(modifier = Modifier.width(6.dp))
+                                    val isCategoryOnly = feed.preferredScope.equals(FeedEntity.SCOPE_CATEGORY, ignoreCase = true)
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(2.dp))
-                                            .background(NothingRed)
+                                            .background(if (isCategoryOnly) NothingRed.copy(alpha = 0.25f) else NothingRed)
+                                            .border(if (isCategoryOnly) 1.dp else 0.dp, NothingRed, RoundedCornerShape(2.dp))
                                             .padding(horizontal = 4.dp, vertical = 2.dp)
                                     ) {
                                         Text(
-                                            text = "★ PREFERRED",
+                                            text = if (isCategoryOnly) "★ ${feed.category.uppercase()} ONLY" else "★ ALL FEEDS",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = NothingWhite,
                                             fontSize = 8.sp,
@@ -847,15 +850,25 @@ fun SettingsScreen(viewModel: RssViewModel) {
 
                             // Star preferred toggle
                             IconButton(
-                                onClick = { viewModel.toggleFeedPreferred(feed.url, feed.isPreferred) },
+                                onClick = {
+                                    viewModel.cycleFeedPreferred(feed.url) { isPref, scope ->
+                                        val message = when {
+                                            !isPref -> "${feed.title}: Removed from preferred sources"
+                                            scope.equals(FeedEntity.SCOPE_CATEGORY, ignoreCase = true) -> "${feed.title}: ★ Preferred in ${feed.category.uppercase()} only"
+                                            else -> "${feed.title}: ★ Preferred in ALL feeds"
+                                        }
+                                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                                    }
+                                },
                                 modifier = Modifier
                                     .testTag("feed_preferred_star_${feed.title}")
                                     .size(32.dp)
                             ) {
+                                val isCategoryOnly = feed.isPreferred && feed.preferredScope.equals(FeedEntity.SCOPE_CATEGORY, ignoreCase = true)
                                 Icon(
                                     imageVector = if (feed.isPreferred) Icons.Filled.Star else Icons.Outlined.StarBorder,
                                     contentDescription = "Preferred",
-                                    tint = if (feed.isPreferred) NothingRed else NothingTextMuted,
+                                    tint = if (feed.isPreferred) (if (isCategoryOnly) NothingRed.copy(alpha = 0.85f) else NothingRed) else NothingTextMuted,
                                     modifier = Modifier.size(18.dp)
                                 )
                             }
@@ -875,6 +888,51 @@ fun SettingsScreen(viewModel: RssViewModel) {
                                     .size(36.dp)
                             )
                         }
+                    }
+                }
+            }
+
+            // YOUTUBE & YOUTUBE MUSIC PODCAST PLAYBACK INTEGRATION
+            item {
+                Spacer(modifier = Modifier.height(16.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(NothingDarkGray)
+                        .border(1.dp, NothingRed.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
+                        .padding(16.dp)
+                ) {
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Headphones,
+                                contentDescription = "YouTube Music Link",
+                                tint = NothingRed,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "YOUTUBE & YOUTUBE MUSIC SYNC",
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                color = NothingWhite
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Every podcast episode in the app includes instant 'YT MUSIC' and 'WEB' deep-link buttons to immediately resume or open shows in the official YouTube Music / YouTube apps.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = NothingTextMuted
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Note: Google does not provide a public API for 3rd-party apps to directly write to private YouTube Watch History. The app maintains 100% verified playback tracking locally on your device.",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            color = NothingTextSecondary
+                        )
                     }
                 }
             }
@@ -1605,8 +1663,15 @@ fun SettingsScreen(viewModel: RssViewModel) {
             feed = editingFeedForFolder!!,
             availableCategories = availableCategories,
             onDismiss = { editingFeedForFolder = null },
-            onSaveFeed = { newTitle, newUrl, newCategory, newIconUrl ->
-                viewModel.updateFeedDetails(editingFeedForFolder!!, newTitle, newUrl, newCategory)
+            onSaveFeed = { newTitle, newUrl, newCategory, newIconUrl, newIsPreferred, newPreferredScope ->
+                viewModel.updateFeedDetails(
+                    oldFeed = editingFeedForFolder!!,
+                    newTitle = newTitle,
+                    newUrl = newUrl,
+                    newCategory = newCategory,
+                    newIsPreferred = newIsPreferred,
+                    newPreferredScope = newPreferredScope
+                )
                 viewModel.updateFeedIconUrl(newUrl, newIconUrl)
                 editingFeedForFolder = null
             }

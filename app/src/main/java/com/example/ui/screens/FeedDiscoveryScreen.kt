@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -130,8 +131,17 @@ fun FeedDiscoveryScreen(viewModel: RssViewModel) {
         { url -> InAppBrowser.openUrl(context, url) }
     }
 
-    val onTogglePreferred: (String, Boolean) -> Unit = remember(viewModel) {
-        { url, pref -> viewModel.toggleFeedPreferred(url, pref) }
+    val onTogglePreferred: (String, Boolean) -> Unit = remember(viewModel, context) {
+        { url, _ ->
+            viewModel.cycleFeedPreferred(url) { isPref, scope ->
+                val msg = when {
+                    !isPref -> "Removed from preferred sources"
+                    scope.equals(FeedEntity.SCOPE_CATEGORY, ignoreCase = true) -> "★ Preferred in this category only"
+                    else -> "★ Preferred across ALL feeds"
+                }
+                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     val onDeleteFeed: (String) -> Unit = remember(viewModel) {
@@ -962,8 +972,15 @@ fun FeedDiscoveryScreen(viewModel: RssViewModel) {
             feed = editingFeedForFolder!!,
             availableCategories = availableCategories,
             onDismiss = { editingFeedForFolder = null },
-            onSaveFeed = { newTitle, newUrl, newCategory, newIconUrl ->
-                viewModel.updateFeedDetails(editingFeedForFolder!!, newTitle, newUrl, newCategory)
+            onSaveFeed = { newTitle, newUrl, newCategory, newIconUrl, newIsPreferred, newPreferredScope ->
+                viewModel.updateFeedDetails(
+                    oldFeed = editingFeedForFolder!!,
+                    newTitle = newTitle,
+                    newUrl = newUrl,
+                    newCategory = newCategory,
+                    newIsPreferred = newIsPreferred,
+                    newPreferredScope = newPreferredScope
+                )
                 viewModel.updateFeedIconUrl(newUrl, newIconUrl)
                 editingFeedForFolder = null
             }
@@ -1239,6 +1256,26 @@ private fun UserFeedCard(
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold
                         )
+                    }
+
+                    if (userFeed.isPreferred) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        val isCatOnly = userFeed.preferredScope.equals(FeedEntity.SCOPE_CATEGORY, ignoreCase = true)
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(if (isCatOnly) NothingRed.copy(alpha = 0.25f) else NothingRed)
+                                .border(if (isCatOnly) 1.dp else 0.dp, NothingRed, RoundedCornerShape(2.dp))
+                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = if (isCatOnly) "★ ${userFeed.category.uppercase()} ONLY" else "★ ALL FEEDS",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = NothingWhite,
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
 

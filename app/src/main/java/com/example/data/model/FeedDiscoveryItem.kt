@@ -8,6 +8,7 @@ data class FeedDiscoveryItem(
     val category: String,
     val description: String,
     val isDefaultPreferred: Boolean = false,
+    val preferredScope: String = FeedEntity.SCOPE_ALL,
     val isPodcast: Boolean = false,
     val isVideoPodcast: Boolean = false
 )
@@ -31,6 +32,7 @@ object DefaultFeedCatalog {
                 category = item.category,
                 description = item.description,
                 isPreferred = item.isDefaultPreferred,
+                preferredScope = item.preferredScope,
                 isEnabled = true,
                 isCustom = false
             )

@@ -342,18 +342,30 @@ class RssRepository(
         return combine(baseArticlesFlow, feeds) { articles, allFeeds ->
             fun normalizeUrl(url: String) = url.trim().trimEnd('/').lowercase()
 
-            val preferredUrlMap = allFeeds.associate { normalizeUrl(it.url) to it.isPreferred }
+            val feedPreferredMap = allFeeds.associate { 
+                normalizeUrl(it.url) to Pair(it.isPreferred, it.preferredScope) 
+            }
             val feedCategoryMap = allFeeds.associate { normalizeUrl(it.url) to it.category }
             val enabledUrlSet = allFeeds.filter { it.isEnabled }.map { normalizeUrl(it.url) }.toSet()
 
-            // Filter & update preferred source flags and categories
+            // Filter & update preferred source flags and categories based on active category context
             val filteredArticles = articles.map { article ->
                 val normUrl = normalizeUrl(article.feedUrl)
-                val isPref = preferredUrlMap[normUrl] ?: article.isPreferredSource
+                val (feedIsPref, feedPrefScope) = feedPreferredMap[normUrl] ?: Pair(article.isPreferredSource, FeedEntity.SCOPE_ALL)
                 val feedCat = feedCategoryMap[normUrl] ?: article.category
+
+                // Context-aware preferred source evaluation:
+                // - In "ALL" stream: only feeds preferred for ALL feeds are considered preferred.
+                // - In specific category streams: all feeds preferred for that category (CATEGORY or ALL) are considered preferred!
+                val isPrefInCurrentContext = when {
+                    !feedIsPref -> false
+                    categoryFilter == "ALL" -> feedPrefScope.equals(FeedEntity.SCOPE_ALL, ignoreCase = true) || feedPrefScope.isBlank()
+                    else -> true
+                }
+
                 var updated = article
-                if (article.isPreferredSource != isPref) {
-                    updated = updated.copy(isPreferredSource = isPref)
+                if (article.isPreferredSource != isPrefInCurrentContext) {
+                    updated = updated.copy(isPreferredSource = isPrefInCurrentContext)
                 }
                 if (!feedCat.isNullOrBlank() && updated.category != feedCat) {
                     updated = updated.copy(category = feedCat)
@@ -561,28 +573,71 @@ class RssRepository(
     }
 
     suspend fun toggleFeedPreferred(feedUrl: String, currentPreferred: Boolean) {
-        withContext(Dispatchers.IO) {
-            val cleanUrl = feedUrl.trim()
-            val altUrl = if (cleanUrl.endsWith("/")) cleanUrl.dropLast(1) else "$cleanUrl/"
-            val existing = rssDao.getFeedByUrl(cleanUrl) ?: rssDao.getFeedByUrl(altUrl)
+        cycleFeedPreferred(feedUrl)
+    }
 
-            if (existing != null) {
-                rssDao.updateFeedPreferred(existing.url, !currentPreferred)
-            } else {
-                val catalogItem = DefaultFeedCatalog.curatedFeeds.find {
-                    it.url.equals(cleanUrl, ignoreCase = true) || it.url.equals(altUrl, ignoreCase = true)
-                }
-                val newFeed = FeedEntity(
-                    url = cleanUrl,
-                    title = catalogItem?.title ?: "Feed",
-                    category = catalogItem?.category ?: "GENERAL",
-                    description = catalogItem?.description ?: "",
-                    isPreferred = !currentPreferred,
-                    isEnabled = true,
-                    isCustom = false
-                )
-                rssDao.insertFeed(newFeed)
+    suspend fun setFeedPreferredWithScope(
+        feedUrl: String,
+        isPreferred: Boolean,
+        preferredScope: String = FeedEntity.SCOPE_ALL
+    ) = withContext(Dispatchers.IO) {
+        val cleanUrl = feedUrl.trim()
+        val altUrl = if (cleanUrl.endsWith("/")) cleanUrl.dropLast(1) else "$cleanUrl/"
+        val existing = rssDao.getFeedByUrl(cleanUrl) ?: rssDao.getFeedByUrl(altUrl)
+
+        if (existing != null) {
+            rssDao.updateFeedPreferredWithScope(existing.url, isPreferred, preferredScope)
+        } else {
+            val catalogItem = DefaultFeedCatalog.curatedFeeds.find {
+                it.url.equals(cleanUrl, ignoreCase = true) || it.url.equals(altUrl, ignoreCase = true)
             }
+            val newFeed = FeedEntity(
+                url = cleanUrl,
+                title = catalogItem?.title ?: "Feed",
+                category = catalogItem?.category ?: "GENERAL",
+                description = catalogItem?.description ?: "",
+                isPreferred = isPreferred,
+                preferredScope = preferredScope,
+                isEnabled = true,
+                isCustom = false
+            )
+            rssDao.insertFeed(newFeed)
+        }
+    }
+
+    /**
+     * Cycles through preferred states:
+     * 1. OFF -> 2. CATEGORY_ONLY (★ Category) -> 3. ALL_FEEDS (★ All) -> 4. OFF
+     */
+    suspend fun cycleFeedPreferred(feedUrl: String): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        val cleanUrl = feedUrl.trim()
+        val altUrl = if (cleanUrl.endsWith("/")) cleanUrl.dropLast(1) else "$cleanUrl/"
+        val existing = rssDao.getFeedByUrl(cleanUrl) ?: rssDao.getFeedByUrl(altUrl)
+
+        if (existing == null) {
+            val catalogItem = DefaultFeedCatalog.curatedFeeds.find {
+                it.url.equals(cleanUrl, ignoreCase = true) || it.url.equals(altUrl, ignoreCase = true)
+            }
+            val newFeed = FeedEntity(
+                url = cleanUrl,
+                title = catalogItem?.title ?: "Feed",
+                category = catalogItem?.category ?: "GENERAL",
+                description = catalogItem?.description ?: "",
+                isPreferred = true,
+                preferredScope = FeedEntity.SCOPE_CATEGORY,
+                isEnabled = true,
+                isCustom = false
+            )
+            rssDao.insertFeed(newFeed)
+            Pair(true, FeedEntity.SCOPE_CATEGORY)
+        } else {
+            val nextState = when {
+                !existing.isPreferred -> Pair(true, FeedEntity.SCOPE_CATEGORY)
+                existing.preferredScope.equals(FeedEntity.SCOPE_CATEGORY, ignoreCase = true) -> Pair(true, FeedEntity.SCOPE_ALL)
+                else -> Pair(false, FeedEntity.SCOPE_ALL)
+            }
+            rssDao.updateFeedPreferredWithScope(existing.url, nextState.first, nextState.second)
+            nextState
         }
     }
 
@@ -647,7 +702,9 @@ class RssRepository(
         oldFeed: FeedEntity,
         newTitle: String,
         newUrl: String,
-        newCategory: String
+        newCategory: String,
+        newIsPreferred: Boolean = oldFeed.isPreferred,
+        newPreferredScope: String = oldFeed.preferredScope
     ): Boolean = withContext(Dispatchers.IO) {
         val cleanUrl = newUrl.trim()
         val formattedUrl = if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) {
@@ -659,7 +716,7 @@ class RssRepository(
         val formattedTitle = newTitle.trim().ifBlank { oldFeed.title }
 
         if (oldFeed.url == formattedUrl) {
-            rssDao.updateFeedDetails(oldFeed.url, formattedTitle, formattedCategory)
+            rssDao.updateFeedDetailsWithScope(oldFeed.url, formattedTitle, formattedCategory, newIsPreferred, newPreferredScope)
             FeedCategoryAutoTagger.recordUserTagging(context, oldFeed.url, formattedTitle, formattedCategory)
             true
         } else {
@@ -669,6 +726,8 @@ class RssRepository(
                 url = formattedUrl,
                 title = formattedTitle,
                 category = formattedCategory,
+                isPreferred = newIsPreferred,
+                preferredScope = newPreferredScope,
                 lastUpdated = System.currentTimeMillis()
             )
             rssDao.insertFeed(updatedFeed)

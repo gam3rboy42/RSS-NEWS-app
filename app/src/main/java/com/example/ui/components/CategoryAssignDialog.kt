@@ -67,7 +67,7 @@ fun CategoryAssignDialog(
     feed: FeedEntity,
     availableCategories: List<String>,
     onDismiss: () -> Unit,
-    onSaveFeed: (newTitle: String, newUrl: String, newCategory: String, newIconUrl: String) -> Unit,
+    onSaveFeed: (newTitle: String, newUrl: String, newCategory: String, newIconUrl: String, isPreferred: Boolean, preferredScope: String) -> Unit,
     onSaveCategory: ((String) -> Unit)? = null
 ) {
     var editableTitle by remember { mutableStateOf(feed.title) }
@@ -75,8 +75,12 @@ fun CategoryAssignDialog(
     var editableIconUrl by remember { mutableStateOf(feed.iconUrl) }
     var selectedFolder by remember { mutableStateOf(feed.category) }
     var customFolderName by remember { mutableStateOf("") }
+    var isPreferred by remember { mutableStateOf(feed.isPreferred) }
+    var preferredScope by remember { mutableStateOf(feed.preferredScope) }
     val coroutineScope = rememberCoroutineScope()
     var isGrabbingArtwork by remember { mutableStateOf(false) }
+
+    val activeCategory = if (customFolderName.isNotBlank()) customFolderName.trim().uppercase() else selectedFolder.trim().uppercase()
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -311,6 +315,115 @@ fun CategoryAssignDialog(
                         .fillMaxWidth()
                 )
 
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Preferred Source Scope Selection
+                Text(
+                    text = "PREFERRED SOURCE STATUS & SCOPE:",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = NothingWhite,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    // Option 1: Not Preferred
+                    val isOffSelected = !isPreferred
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("preferred_scope_off")
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(if (isOffSelected) NothingSurface else NothingDarkGray)
+                            .border(1.dp, if (isOffSelected) NothingWhite else NothingBorder, RoundedCornerShape(4.dp))
+                            .clickable {
+                                isPreferred = false
+                            }
+                            .padding(vertical = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "OFF",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            fontWeight = if (isOffSelected) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isOffSelected) NothingWhite else NothingTextMuted
+                        )
+                    }
+
+                    // Option 2: Category Only Preferred
+                    val isCatSelected = isPreferred && preferredScope == FeedEntity.SCOPE_CATEGORY
+                    Box(
+                        modifier = Modifier
+                            .weight(1.3f)
+                            .testTag("preferred_scope_category")
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(if (isCatSelected) NothingRed.copy(alpha = 0.25f) else NothingDarkGray)
+                            .border(1.dp, if (isCatSelected) NothingRed else NothingBorder, RoundedCornerShape(4.dp))
+                            .clickable {
+                                isPreferred = true
+                                preferredScope = FeedEntity.SCOPE_CATEGORY
+                            }
+                            .padding(vertical = 8.dp, horizontal = 4.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "★ ${activeCategory.ifBlank { "CATEGORY" }} ONLY",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 9.sp,
+                            fontWeight = if (isCatSelected) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isCatSelected) NothingRed else NothingTextSecondary,
+                            maxLines = 1
+                        )
+                    }
+
+                    // Option 3: All Feeds Preferred
+                    val isAllSelected = isPreferred && (preferredScope == FeedEntity.SCOPE_ALL || preferredScope.isBlank())
+                    Box(
+                        modifier = Modifier
+                            .weight(1.2f)
+                            .testTag("preferred_scope_all")
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(if (isAllSelected) NothingRed else NothingDarkGray)
+                            .border(1.dp, if (isAllSelected) NothingRed else NothingBorder, RoundedCornerShape(4.dp))
+                            .clickable {
+                                isPreferred = true
+                                preferredScope = FeedEntity.SCOPE_ALL
+                            }
+                            .padding(vertical = 8.dp, horizontal = 4.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "★ ALL FEEDS",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 9.sp,
+                            fontWeight = if (isAllSelected) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isAllSelected) NothingWhite else NothingTextSecondary,
+                            maxLines = 1
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Text(
+                    text = if (!isPreferred) {
+                        "Standard source (no special boost)."
+                    } else if (preferredScope == FeedEntity.SCOPE_CATEGORY) {
+                        "★ Preferred only inside the $activeCategory folder (keeps your main ALL stream balanced)."
+                    } else {
+                        "★ Preferred everywhere (top priority in ALL stream and in $activeCategory)."
+                    },
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 9.sp,
+                    color = if (isPreferred) NothingRed else NothingTextMuted,
+                    lineHeight = 12.sp
+                )
+
                 Spacer(modifier = Modifier.height(12.dp))
 
                 // Podcast/Feed Artwork URL Section
@@ -443,7 +556,9 @@ fun CategoryAssignDialog(
                                 editableTitle.ifBlank { feed.title },
                                 editableUrl.ifBlank { feed.url },
                                 finalCategory.ifBlank { feed.category },
-                                editableIconUrl.trim()
+                                editableIconUrl.trim(),
+                                isPreferred,
+                                preferredScope
                             )
                             onSaveCategory?.invoke(finalCategory)
                         },

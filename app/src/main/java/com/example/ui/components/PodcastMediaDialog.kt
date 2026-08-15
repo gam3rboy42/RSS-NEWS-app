@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Forward10
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -675,7 +676,7 @@ fun PodcastMediaDialog(
                 // Bottom Action Buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     var isDownloading by remember { mutableStateOf(false) }
@@ -721,17 +722,40 @@ fun PodcastMediaDialog(
                             contentColor = NothingWhite
                         ),
                         shape = RoundedCornerShape(4.dp),
-                        enabled = !isDownloading
+                        enabled = !isDownloading,
+                        modifier = Modifier.weight(1f)
                     ) {
                         if (isDownloading) {
                             CircularProgressIndicator(modifier = Modifier.size(12.dp), color = NothingWhite, strokeWidth = 2.dp)
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("DOWNLOADING...", fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                            Text("DOWNLOADING...", fontFamily = FontFamily.Monospace, fontSize = 9.sp)
                         } else {
                             Icon(imageVector = if (isDownloaded) Icons.Default.DownloadDone else Icons.Default.Download, contentDescription = "Download", modifier = Modifier.size(14.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(if (isDownloaded) "SAVED OFFLINE ✓" else "DOWNLOAD OFFLINE", fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                            Text(if (isDownloaded) "SAVED ✓" else "DOWNLOAD", fontFamily = FontFamily.Monospace, fontSize = 9.sp)
                         }
+                    }
+
+                    // Open directly in YouTube Music button
+                    Button(
+                        onClick = {
+                            com.example.util.YouTubeMusicLinker.openInYouTubeMusic(
+                                context = context,
+                                episodeTitle = currentArticleState.title,
+                                feedTitle = currentArticleState.feedTitle,
+                                webLink = currentArticleState.link
+                            )
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = NothingDarkGray,
+                            contentColor = NothingWhite
+                        ),
+                        shape = RoundedCornerShape(4.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(imageVector = Icons.Default.Headphones, contentDescription = "YT Music", tint = NothingRed, modifier = Modifier.size(13.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("YT MUSIC", fontFamily = FontFamily.Monospace, fontSize = 9.sp)
                     }
 
                     Button(
@@ -742,9 +766,9 @@ fun PodcastMediaDialog(
                         ),
                         shape = RoundedCornerShape(4.dp)
                     ) {
-                        Icon(imageVector = Icons.Default.OpenInBrowser, contentDescription = "Open Link", modifier = Modifier.size(14.dp))
+                        Icon(imageVector = Icons.Default.OpenInBrowser, contentDescription = "Open Link", modifier = Modifier.size(13.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("WEB LINK", fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                        Text("WEB", fontFamily = FontFamily.Monospace, fontSize = 9.sp)
                     }
                 }
             }

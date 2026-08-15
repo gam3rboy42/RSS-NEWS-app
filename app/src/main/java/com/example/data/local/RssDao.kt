@@ -34,6 +34,12 @@ interface RssDao {
     @Query("UPDATE feeds SET isPreferred = :isPreferred WHERE url = :url")
     suspend fun updateFeedPreferred(url: String, isPreferred: Boolean)
 
+    @Query("UPDATE feeds SET isPreferred = :isPreferred, preferredScope = :preferredScope WHERE url = :url")
+    suspend fun updateFeedPreferredWithScope(url: String, isPreferred: Boolean, preferredScope: String)
+
+    @Query("UPDATE feeds SET preferredScope = :preferredScope WHERE url = :url")
+    suspend fun updateFeedPreferredScope(url: String, preferredScope: String)
+
     @Query("UPDATE feeds SET isEnabled = :isEnabled WHERE url = :url")
     suspend fun updateFeedEnabled(url: String, isEnabled: Boolean)
 
@@ -42,6 +48,9 @@ interface RssDao {
 
     @Query("UPDATE feeds SET title = :title, category = :category WHERE url = :url")
     suspend fun updateFeedDetails(url: String, title: String, category: String)
+
+    @Query("UPDATE feeds SET title = :title, category = :category, isPreferred = :isPreferred, preferredScope = :preferredScope WHERE url = :url")
+    suspend fun updateFeedDetailsWithScope(url: String, title: String, category: String, isPreferred: Boolean, preferredScope: String)
 
     @Query("UPDATE feeds SET iconUrl = :iconUrl WHERE url = :url")
     suspend fun updateFeedIconUrl(url: String, iconUrl: String)
