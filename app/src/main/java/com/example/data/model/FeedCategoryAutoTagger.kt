@@ -138,7 +138,17 @@ object FeedCategoryAutoTagger {
             return exactRule
         }
 
-        // 2. Aggregate text to analyze
+        // 2. Fast on-device TPU/NPU neural inference
+        val npuClassification = NpuTensorCategorizer.classifyFeed(
+            feedTitle = feedTitle,
+            feedDescription = feedDescription,
+            sampleArticleTitles = articleTitles
+        )
+        if (npuClassification.category.isNotBlank() && npuClassification.category != "GENERAL" && npuClassification.confidence >= 0.35f) {
+            return npuClassification.category
+        }
+
+        // 3. Aggregate text to analyze user-learned keywords
         val fullText = "$feedTitle $feedUrl $feedDescription ${articleTitles.joinToString(" ")}".lowercase(Locale.ROOT)
 
         // Check user-learned keyword rules

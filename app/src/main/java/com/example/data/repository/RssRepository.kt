@@ -33,6 +33,7 @@ import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import com.example.data.model.FeedCategoryAutoTagger
+import com.example.data.model.NpuTensorCategorizer
 import java.util.concurrent.TimeUnit
 
 sealed class SyncState {
@@ -64,10 +65,12 @@ class RssRepository(
         .build()
 
     val feeds: Flow<List<FeedEntity>> = rssDao.getAllFeeds()
-    val rawArticles: Flow<List<ArticleEntity>> = rssDao.getAllArticles()
-    val bookmarkedArticles: Flow<List<ArticleEntity>> = rssDao.getBookmarkedArticles()
-    val offlineArticles: Flow<List<ArticleEntity>> = rssDao.getOfflineArticles()
-    val readArticles: Flow<List<ArticleEntity>> = rssDao.getReadArticles()
+    val rawArticles: Flow<List<ArticleEntity>> = rssDao.getAllArticles().map { list -> list.map { com.example.util.HtmlSanitizer.sanitizeArticle(it) } }
+    val newsArticles: Flow<List<ArticleEntity>> = rssDao.getNewsArticles().map { list -> list.map { com.example.util.HtmlSanitizer.sanitizeArticle(it) } }
+    val podcastArticles: Flow<List<ArticleEntity>> = rssDao.getPodcastArticles().map { list -> list.map { com.example.util.HtmlSanitizer.sanitizeArticle(it) } }
+    val bookmarkedArticles: Flow<List<ArticleEntity>> = rssDao.getBookmarkedArticles().map { list -> list.map { com.example.util.HtmlSanitizer.sanitizeArticle(it) } }
+    val offlineArticles: Flow<List<ArticleEntity>> = rssDao.getOfflineArticles().map { list -> list.map { com.example.util.HtmlSanitizer.sanitizeArticle(it) } }
+    val readArticles: Flow<List<ArticleEntity>> = rssDao.getReadArticles().map { list -> list.map { com.example.util.HtmlSanitizer.sanitizeArticle(it) } }
 
     private val cachePrefs = context.getSharedPreferences("rss_cache_prefs", Context.MODE_PRIVATE)
 
@@ -116,6 +119,23 @@ class RssRepository(
                     )
                 }
                 rssDao.insertDefaultFeeds(podcastDefaults)
+            }
+            // Clean up any previously misclassified news articles from legacy podcast tables
+            rssDao.cleanupMistaggedPodcastArticles()
+
+            // Sanitize any existing stored articles with raw HTML entities
+            try {
+                val dirty = rssDao.getAllArticlesList().filter {
+                    it.title.contains("&#") || it.title.contains("&amp;") || it.title.contains("&quot;") ||
+                    it.description.contains("&#") || it.description.contains("&amp;") || it.description.contains("&quot;") ||
+                    it.content.contains("&#") || it.content.contains("&amp;") || it.content.contains("&quot;")
+                }
+                if (dirty.isNotEmpty()) {
+                    val cleaned = dirty.map { com.example.util.HtmlSanitizer.sanitizeArticle(it) }
+                    rssDao.insertArticles(cleaned)
+                }
+            } catch (e: Exception) {
+                Log.e("RssRepository", "Error cleaning HTML entities from existing articles: ${e.localizedMessage}")
             }
         }
     }
@@ -178,20 +198,16 @@ class RssRepository(
         return SingleFeedFetchResult(emptyList())
     }
 
-    suspend fun refreshFeeds(): SyncState = withContext(Dispatchers.IO) {
-        // Ensure default feeds are inserted if DB is completely empty
-        initializeDefaultsIfNeeded()
+    private suspend fun refreshFeedsInternal(feedsToRefresh: List<FeedEntity>): SyncState = withContext(Dispatchers.IO) {
+        if (feedsToRefresh.isEmpty()) {
+            return@withContext SyncState.Success(0)
+        }
 
         try {
-            val enabledFeeds = rssDao.getEnabledFeeds()
-            if (enabledFeeds.isEmpty()) {
-                return@withContext SyncState.Success(0)
-            }
-
             // Fetch feeds concurrently with max 6 parallel network calls
             val semaphore = Semaphore(6)
             val feedResults = coroutineScope {
-                enabledFeeds.map { feed ->
+                feedsToRefresh.map { feed ->
                     async(Dispatchers.IO) {
                         semaphore.withPermit {
                             fetchSingleFeed(feed)
@@ -207,13 +223,85 @@ class RssRepository(
                 rssDao.updateFeedIconUrl(feedUrl, iconUrl)
             }
 
-            if (newArticles.isNotEmpty()) {
-                rssDao.insertArticles(newArticles)
+            // Auto-classify feeds with generic or missing categories via NPU on RSS pull
+            for (feed in feedsToRefresh) {
+                if (feed.category.equals("GENERAL", ignoreCase = true) || 
+                    feed.category.equals("UNCATEGORIZED", ignoreCase = true) || 
+                    feed.category.isBlank()) {
+                    val sampleTitles = newArticles.filter { it.feedUrl.equals(feed.url, ignoreCase = true) }.map { it.title }
+                    val classification = com.example.data.model.NpuTensorCategorizer.classifyFeed(
+                        feedTitle = feed.title,
+                        feedDescription = feed.description,
+                        feedUrl = feed.url,
+                        sampleArticleTitles = sampleTitles
+                    )
+                    if (classification.category.isNotBlank() && classification.category != "GENERAL") {
+                        rssDao.updateFeedCategory(feed.url, classification.category)
+                    }
+                }
+            }
+
+            // Perform NPU neural filtering & categorization on the RSS pull before persisting to database
+            val currentFeeds = rssDao.getAllFeedsList()
+            val feedCatMap = currentFeeds.associate { it.url.trim().lowercase() to it.category }
+            val npuProcessedArticles = com.example.data.model.NpuTensorCategorizer.processArticlesOnTheFly(
+                articles = newArticles,
+                feedCategoryMap = feedCatMap,
+                enableReclassification = true
+            )
+
+            // Check if newly pulled articles are clearly not full in RSS (stubs, summaries, truncated)
+            // and download their full webpage so they can be viewed in full
+            val enrichedArticles = if (isDeviceOnline() && npuProcessedArticles.isNotEmpty()) {
+                val incompleteArticles = npuProcessedArticles.filter { art ->
+                    !art.isPodcast && !art.isVideoPodcast &&
+                    !art.category.equals("PODCASTS", ignoreCase = true) &&
+                    art.link.isNotBlank() &&
+                    com.example.util.WebpageArticleExtractor.isArticleIncomplete(art)
+                }
+
+                if (incompleteArticles.isNotEmpty()) {
+                    val webpageSemaphore = Semaphore(4)
+                    val fullContentMap = coroutineScope {
+                        incompleteArticles.take(15).map { art ->
+                            async(Dispatchers.IO) {
+                                webpageSemaphore.withPermit {
+                                    val extracted = com.example.util.WebpageArticleExtractor.extractFromWebpage(art.link, okHttpClient)
+                                    if (extracted != null && extracted.fullText.length > art.content.length) {
+                                        art.id to extracted
+                                    } else {
+                                        null
+                                    }
+                                }
+                            }
+                        }.awaitAll().filterNotNull().toMap()
+                    }
+
+                    npuProcessedArticles.map { art ->
+                        val extracted = fullContentMap[art.id]
+                        if (extracted != null) {
+                            art.copy(
+                                content = extracted.fullText,
+                                imageUrl = if (art.imageUrl.isNullOrBlank()) extracted.leadImageUrl else art.imageUrl
+                            )
+                        } else {
+                            art
+                        }
+                    }
+                } else {
+                    npuProcessedArticles
+                }
+            } else {
+                npuProcessedArticles
+            }
+
+            if (enrichedArticles.isNotEmpty()) {
+                rssDao.insertArticles(enrichedArticles)
 
                 // Auto-download preferred podcast episodes on Wi-Fi
                 if (com.example.util.PodcastCacheManager.getAutoDownloadWifi(context) &&
                     com.example.util.PodcastCacheManager.isWifiConnected(context)) {
-                    val preferredPodcasts = newArticles.filter { art ->
+                    val preferredPodcasts = enrichedArticles.filter { art ->
                         (art.isPodcast || art.isVideoPodcast || art.mediaType == "AUDIO" || art.mediaType == "VIDEO" || art.category.equals("PODCASTS", ignoreCase = true)) &&
                         art.isPreferredSource
                     }
@@ -232,6 +320,24 @@ class RssRepository(
         } catch (e: Exception) {
             SyncState.Error(e.localizedMessage ?: "Failed to update feeds")
         }
+    }
+
+    suspend fun refreshFeeds(): SyncState = withContext(Dispatchers.IO) {
+        initializeDefaultsIfNeeded()
+        val enabledFeeds = rssDao.getEnabledFeeds()
+        refreshFeedsInternal(enabledFeeds)
+    }
+
+    suspend fun refreshNewsFeedsOnly(): SyncState = withContext(Dispatchers.IO) {
+        initializeDefaultsIfNeeded()
+        val newsFeeds = rssDao.getEnabledNewsFeeds()
+        refreshFeedsInternal(newsFeeds)
+    }
+
+    suspend fun refreshPodcastFeedsOnly(): SyncState = withContext(Dispatchers.IO) {
+        initializeDefaultsIfNeeded()
+        val podcastFeeds = rssDao.getEnabledPodcastFeeds()
+        refreshFeedsInternal(podcastFeeds)
     }
 
     private suspend fun generateDiscoveredRecommendationsInternal() {
@@ -336,7 +442,7 @@ class RssRepository(
             onlyOffline -> offlineArticles
             onlyBookmarks -> bookmarkedArticles
             onlyReadHistory -> readArticles
-            else -> rawArticles
+            else -> newsArticles
         }
 
         return combine(baseArticlesFlow, feeds) { articles, allFeeds ->
@@ -348,7 +454,8 @@ class RssRepository(
             val feedCategoryMap = allFeeds.associate { normalizeUrl(it.url) to it.category }
             val enabledUrlSet = allFeeds.filter { it.isEnabled }.map { normalizeUrl(it.url) }.toSet()
 
-            // Filter & update preferred source flags and categories based on active category context
+            // Articles are already filtered and categorized by NPU on the RSS pull before being persisted in Room.
+            // On app open and flow emission, we consume the pre-categorized articles directly from Room.
             val filteredArticles = articles.map { article ->
                 val normUrl = normalizeUrl(article.feedUrl)
                 val (feedIsPref, feedPrefScope) = feedPreferredMap[normUrl] ?: Pair(article.isPreferredSource, FeedEntity.SCOPE_ALL)
@@ -367,7 +474,8 @@ class RssRepository(
                 if (article.isPreferredSource != isPrefInCurrentContext) {
                     updated = updated.copy(isPreferredSource = isPrefInCurrentContext)
                 }
-                if (!feedCat.isNullOrBlank() && updated.category != feedCat) {
+                // If the story wasn't specifically reclassified by NPU and parent feed has non-generic category, inherit feed category
+                if (!article.isNpuCategorized && !feedCat.isNullOrBlank() && feedCat != "GENERAL" && updated.category != feedCat) {
                     updated = updated.copy(category = feedCat)
                 }
                 updated
@@ -416,6 +524,78 @@ class RssRepository(
         }.flowOn(Dispatchers.Default)
     }
 
+    /**
+     * Dedicated Podcast stream directly streaming podcast audio/video episodes.
+     * Completely decoupled from the news feed clustering and sorting pipeline.
+     */
+    fun getPodcastStream(): Flow<List<StoryCluster>> {
+        return combine(podcastArticles, feeds) { episodes, allFeeds ->
+            fun normalizeUrl(url: String) = url.trim().trimEnd('/').lowercase()
+
+            val feedCategoryMap = allFeeds.associate { 
+                normalizeUrl(it.url) to it.category.uppercase().trim()
+            }
+            val feedPreferredMap = allFeeds.associate { 
+                normalizeUrl(it.url) to it.isPreferred 
+            }
+            val enabledUrlSet = allFeeds.filter { it.isEnabled }.map { normalizeUrl(it.url) }.toSet()
+
+            fun isPullableAudio(art: ArticleEntity): Boolean {
+                if (art.mediaType.equals("AUDIO", ignoreCase = true)) return true
+                val mUrl = art.mediaUrl?.lowercase() ?: ""
+                if (mUrl.contains(".mp3") || mUrl.contains(".m4a") || mUrl.contains(".ogg") ||
+                    mUrl.contains(".wav") || mUrl.contains(".aac") || mUrl.contains(".flac") ||
+                    mUrl.contains(".opus") || mUrl.contains("/audio") || mUrl.contains("audio/")) {
+                    return true
+                }
+                val lUrl = art.link.lowercase()
+                if (lUrl.endsWith(".mp3") || lUrl.endsWith(".m4a") || lUrl.contains(".mp3?") || lUrl.contains(".m4a?")) {
+                    return true
+                }
+                return false
+            }
+
+            val filtered = episodes.filter { ep ->
+                val normUrl = normalizeUrl(ep.feedUrl)
+                val isFeedEnabled = allFeeds.isEmpty() || enabledUrlSet.contains(normUrl) || ep.isDiscoveredRecommendation
+                val notArchived = !ep.isArchived
+                val notDisliked = !ep.isDisliked
+
+                // Strict Podcast Eligibility:
+                // Nothing that is not in the podcast category folder can be in the podcast page
+                // unless an audio file is able to be pulled.
+                val parentFeedCat = feedCategoryMap[normUrl] ?: ""
+                val isInPodcastFolder = ep.category.equals("PODCASTS", ignoreCase = true) ||
+                        parentFeedCat == "PODCASTS"
+                val audioPullable = isPullableAudio(ep)
+
+                val allowedOnPodcastPage = isInPodcastFolder || audioPullable
+
+                isFeedEnabled && notArchived && notDisliked && allowedOnPodcastPage
+            }
+
+            filtered.map { ep ->
+                val normUrl = normalizeUrl(ep.feedUrl)
+                val isPref = feedPreferredMap[normUrl] ?: ep.isPreferredSource
+                val updatedEp = if (ep.isPreferredSource != isPref) ep.copy(isPreferredSource = isPref) else ep
+
+                StoryCluster(
+                    clusterId = "podcast_${ep.id.hashCode()}",
+                    primaryTitle = updatedEp.title,
+                    category = "PODCASTS",
+                    subcategory = updatedEp.subcategory.ifBlank { "GENERAL" },
+                    isDeal = false,
+                    isBookmarked = updatedEp.isBookmarked,
+                    latestTimestamp = updatedEp.pubDateTimestamp,
+                    articles = listOf(updatedEp)
+                )
+            }.sortedWith(
+                compareByDescending<StoryCluster> { it.articles.any { art -> art.isPreferredSource } }
+                    .thenByDescending { it.latestTimestamp }
+            )
+        }.flowOn(Dispatchers.Default)
+    }
+
     suspend fun toggleBookmark(articleId: String, currentStatus: Boolean) {
         withContext(Dispatchers.IO) {
             rssDao.updateBookmarkStatus(articleId, !currentStatus)
@@ -424,13 +604,71 @@ class RssRepository(
 
     suspend fun toggleOfflineStatus(articleId: String, currentSaved: Boolean) {
         withContext(Dispatchers.IO) {
-            rssDao.updateOfflineStatus(articleId, !currentSaved)
+            val newStatus = !currentSaved
+            rssDao.updateOfflineStatus(articleId, newStatus)
+            if (newStatus && isDeviceOnline()) {
+                val article = rssDao.getArticleById(articleId)
+                if (article != null && com.example.util.WebpageArticleExtractor.isArticleIncomplete(article)) {
+                    val extracted = com.example.util.WebpageArticleExtractor.extractFromWebpage(article.link, okHttpClient)
+                    if (extracted != null && extracted.fullText.length > article.content.length) {
+                        rssDao.updateArticleFullContent(
+                            id = article.id,
+                            content = extracted.fullText,
+                            imageUrl = if (article.imageUrl.isNullOrBlank()) extracted.leadImageUrl else null
+                        )
+                    }
+                }
+            }
         }
+    }
+
+    suspend fun fetchAndSaveFullArticleWebpage(articleId: String): ArticleEntity? = withContext(Dispatchers.IO) {
+        val current = rssDao.getArticleById(articleId) ?: return@withContext null
+        if (current.link.isBlank()) return@withContext current
+
+        val extracted = com.example.util.WebpageArticleExtractor.extractFromWebpage(current.link, okHttpClient)
+        if (extracted != null && extracted.fullText.length > current.content.length) {
+            val updated = current.copy(
+                content = extracted.fullText,
+                imageUrl = if (current.imageUrl.isNullOrBlank()) extracted.leadImageUrl else current.imageUrl
+            )
+            rssDao.updateArticleFullContent(
+                id = current.id,
+                content = extracted.fullText,
+                imageUrl = if (current.imageUrl.isNullOrBlank()) extracted.leadImageUrl else null
+            )
+            return@withContext com.example.util.HtmlSanitizer.sanitizeArticle(updated)
+        }
+        return@withContext current
     }
 
     suspend fun toggleLikedStatus(articleId: String, currentLiked: Boolean) {
         withContext(Dispatchers.IO) {
             rssDao.updateLikedStatus(articleId, !currentLiked)
+        }
+    }
+
+    suspend fun flagArticleNotPodcast(article: ArticleEntity, reclassifyEntireFeed: Boolean = false) {
+        withContext(Dispatchers.IO) {
+            val npuResult = com.example.data.model.NpuTensorCategorizer.classifyStory(
+                title = article.title,
+                description = article.description,
+                content = article.content,
+                feedCategory = "GENERAL"
+            )
+            val targetCategory = if (npuResult.category.isNotBlank() && !npuResult.category.equals("PODCASTS", ignoreCase = true)) {
+                npuResult.category.uppercase().trim()
+            } else {
+                "TECH"
+            }
+            val targetSubcat = npuResult.subcategory.ifBlank { "GENERAL" }
+
+            rssDao.flagArticleNotPodcast(article.id, targetCategory, targetSubcat)
+
+            if (reclassifyEntireFeed) {
+                rssDao.updateFeedCategory(article.feedUrl, targetCategory)
+                rssDao.flagFeedArticlesNotPodcast(article.feedUrl, targetCategory)
+            }
         }
     }
 
@@ -641,6 +879,168 @@ class RssRepository(
         }
     }
 
+    suspend fun runNpuReclassificationOnAllFeedsAndStories(): NpuTensorCategorizer.BatchClassificationSummary = withContext(Dispatchers.IO) {
+        val startTime = System.currentTimeMillis()
+        val allFeedsList = rssDao.getAllFeedsList()
+        val allArticlesList = rssDao.getAllArticlesList()
+
+        var feedsUpdated = 0
+        var storiesUpdated = 0
+        val updatedFeedCatMap = mutableMapOf<String, String>()
+
+        // 1. Classify All Feeds with NPU Engine
+        for (feed in allFeedsList) {
+            val isPodcastFeed = feed.category.equals("PODCASTS", ignoreCase = true)
+            if (isPodcastFeed) {
+                updatedFeedCatMap[feed.url.trim().lowercase()] = "PODCASTS"
+                continue
+            }
+
+            val feedArticles = allArticlesList.filter { it.feedUrl.equals(feed.url, ignoreCase = true) }
+            val feedClassification = com.example.data.model.NpuTensorCategorizer.classifyFeed(
+                feedTitle = feed.title,
+                feedDescription = feed.description,
+                feedUrl = feed.url,
+                sampleArticleTitles = feedArticles.map { it.title }
+            )
+
+            val newFeedCat = feedClassification.category
+            if (newFeedCat.isNotBlank() && newFeedCat != "GENERAL") {
+                if (newFeedCat != feed.category) {
+                    rssDao.updateFeedCategory(feed.url, newFeedCat)
+                    feedsUpdated++
+                }
+                updatedFeedCatMap[feed.url.trim().lowercase()] = newFeedCat
+            } else {
+                updatedFeedCatMap[feed.url.trim().lowercase()] = feed.category
+            }
+        }
+
+        // 2. Classify All Stories with NPU Engine
+        for (article in allArticlesList) {
+            val isPodcastItem = article.isPodcast || article.isVideoPodcast ||
+                    article.mediaType == "AUDIO" || article.mediaType == "VIDEO" ||
+                    article.category.equals("PODCASTS", ignoreCase = true)
+            if (isPodcastItem) continue
+
+            val feedCat = updatedFeedCatMap[article.feedUrl.trim().lowercase()] ?: article.category
+            val result = com.example.data.model.NpuTensorCategorizer.classifyStory(
+                title = article.title,
+                description = article.description,
+                content = article.content,
+                feedCategory = feedCat,
+                feedUrl = article.feedUrl
+            )
+
+            val finalCat = if (result.category.isNotBlank() && result.category != "GENERAL") result.category else feedCat
+            val finalSubcat = result.subcategory
+
+            var changed = false
+            if (finalCat.isNotBlank() && finalCat != article.category) {
+                rssDao.updateArticleCategoryById(article.id, finalCat, false)
+                changed = true
+            }
+            if (finalSubcat.isNotBlank() && finalSubcat != article.subcategory) {
+                rssDao.updateArticleSubcategoryById(article.id, finalSubcat)
+                changed = true
+            }
+            if (changed) {
+                storiesUpdated++
+            }
+        }
+
+        val elapsed = System.currentTimeMillis() - startTime
+        NpuTensorCategorizer.BatchClassificationSummary(
+            feedsClassified = feedsUpdated,
+            storiesClassified = storiesUpdated,
+            hardwareEngine = NpuTensorCategorizer.hardwareInfo.acceleratorType,
+            executionTimeMs = elapsed
+        )
+    }
+
+    suspend fun runNpuReclassificationOnAllArticles(): Int = withContext(Dispatchers.IO) {
+        val summary = runNpuReclassificationOnAllFeedsAndStories()
+        summary.storiesClassified + summary.feedsClassified
+    }
+
+    suspend fun teachAndLabelArticle(
+        articleId: String,
+        newCategory: String,
+        newSubcategory: String = "",
+        updateSourceFeed: Boolean = false
+    ): Boolean = withContext(Dispatchers.IO) {
+        val article = rssDao.getArticleById(articleId) ?: return@withContext false
+        val prevCategory = article.category
+
+        // 1. Train on-device NPU tensor model
+        NpuTensorCategorizer.recordUserLabel(
+            context = context,
+            title = article.title,
+            description = article.description,
+            content = article.content,
+            feedUrl = article.feedUrl,
+            newCategory = newCategory,
+            newSubcategory = newSubcategory,
+            previousCategory = prevCategory
+        )
+
+        // Also record in AutoTagger for backward compatibility
+        FeedCategoryAutoTagger.recordUserTagging(context, article.feedUrl, article.title, newCategory)
+
+        // 2. Update the article in Room
+        val finalSubcat = if (newSubcategory.isNotBlank()) newSubcategory else com.example.data.model.SubcategoryAnalyzer.analyze(article.title, article.description, newCategory)
+        rssDao.updateArticleCategoryAndSubcategoryById(articleId, newCategory.uppercase().trim(), finalSubcat)
+
+        // 3. If user requested to apply to source feed as well
+        if (updateSourceFeed && article.feedUrl.isNotBlank()) {
+            rssDao.updateFeedCategory(article.feedUrl, newCategory.uppercase().trim())
+            val feed = rssDao.getFeedByUrl(article.feedUrl)
+            if (feed != null) {
+                NpuTensorCategorizer.recordUserFeedLabel(
+                    context = context,
+                    feedUrl = feed.url,
+                    feedTitle = feed.title,
+                    feedDescription = feed.description,
+                    newCategory = newCategory
+                )
+            }
+        }
+        true
+    }
+
+    suspend fun teachAndLabelFeed(
+        feedUrl: String,
+        newCategory: String
+    ): Boolean = withContext(Dispatchers.IO) {
+        val cleanCat = newCategory.uppercase().trim()
+        val feed = rssDao.getFeedByUrl(feedUrl) ?: return@withContext false
+
+        // 1. Train on-device NPU
+        NpuTensorCategorizer.recordUserFeedLabel(
+            context = context,
+            feedUrl = feed.url,
+            feedTitle = feed.title,
+            feedDescription = feed.description,
+            newCategory = cleanCat
+        )
+        FeedCategoryAutoTagger.recordUserTagging(context, feed.url, feed.title, cleanCat)
+
+        // 2. Update Feed in DB
+        rssDao.updateFeedCategory(feedUrl, cleanCat)
+
+        // 3. Update articles from this feed
+        rssDao.updateArticlesCategoryByFeedUrl(feedUrl, cleanCat, cleanCat == "PODCASTS")
+        true
+    }
+
+    fun getNpuModelLearningStats(): NpuTensorCategorizer.ModelLearningStats {
+        return NpuTensorCategorizer.getLearnedModelStats(context)
+    }
+
+    fun resetNpuLearnedWeights() {
+        NpuTensorCategorizer.clearLearnedWeights(context)
+    }
+
     suspend fun autoTagAllFeedsOnDevice(): Int = withContext(Dispatchers.IO) {
         val allFeedsList = rssDao.getAllFeedsList()
         val allArticlesList = rssDao.getAllArticlesList()
@@ -678,6 +1078,8 @@ class RssRepository(
             val existing = rssDao.getFeedByUrl(cleanUrl) ?: rssDao.getFeedByUrl(altUrl)
             if (existing != null) {
                 rssDao.updateFeedCategory(existing.url, formatted)
+                rssDao.updateArticlesCategoryByFeedUrl(existing.url, formatted, formatted == "PODCASTS")
+                rssDao.cleanupMistaggedPodcastArticles()
                 FeedCategoryAutoTagger.recordUserTagging(context, existing.url, existing.title, formatted)
             } else {
                 val catalogItem = DefaultFeedCatalog.curatedFeeds.find {
@@ -874,13 +1276,13 @@ class RssRepository(
 
     suspend fun getArticleById(id: String): ArticleEntity? {
         return withContext(Dispatchers.IO) {
-            rssDao.getArticleById(id)
+            rssDao.getArticleById(id)?.let { com.example.util.HtmlSanitizer.sanitizeArticle(it) }
         }
     }
 
     suspend fun getArticleByLink(link: String): ArticleEntity? {
         return withContext(Dispatchers.IO) {
-            rssDao.getArticleByLink(link)
+            rssDao.getArticleByLink(link)?.let { com.example.util.HtmlSanitizer.sanitizeArticle(it) }
         }
     }
 

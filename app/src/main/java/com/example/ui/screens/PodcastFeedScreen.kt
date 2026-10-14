@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.graphics.SolidColor
@@ -31,14 +34,18 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -84,8 +91,8 @@ fun PodcastFeedScreen(
     val podcastTypeFilter by viewModel.podcastTypeFilter.collectAsState()
     val selectedPodcastCategory by viewModel.selectedPodcastCategory.collectAsState()
     val customPodcastCategories by viewModel.customPodcastCategories.collectAsState()
-    val searchQuery by viewModel.searchQuery.collectAsState()
-    val syncState by viewModel.syncState.collectAsState()
+    val searchQuery by viewModel.podcastSearchQuery.collectAsState()
+    val syncState by viewModel.podcastSyncState.collectAsState()
     val isOnline by viewModel.isOnline.collectAsState()
     val allFeeds by viewModel.allFeeds.collectAsState()
     val selectedPodcastShowUrl by viewModel.selectedPodcastShowUrl.collectAsState()
@@ -96,13 +103,16 @@ fun PodcastFeedScreen(
         allFeeds.filter { it.category.equals("PODCASTS", ignoreCase = true) || it.url.contains("podcast", ignoreCase = true) }
     }
 
+    val context = LocalContext.current
     var activePodcastArticle by remember { mutableStateOf<ArticleEntity?>(null) }
+    var articleToFlagNotPodcast by remember { mutableStateOf<ArticleEntity?>(null) }
     var feedToDelete by remember { mutableStateOf<FeedEntity?>(null) }
     var feedToEdit by remember { mutableStateOf<FeedEntity?>(null) }
     var showFeedOptionsDialog by remember { mutableStateOf<FeedEntity?>(null) }
     var showAddCategoryDialog by remember { mutableStateOf(false) }
     var newCategoryInput by remember { mutableStateOf("") }
     var showDiscoverPanel by remember(podcastFeeds.size) { mutableStateOf(podcastFeeds.isEmpty()) }
+    val listState = rememberLazyListState()
 
     Column(
         modifier = Modifier
@@ -119,7 +129,7 @@ fun PodcastFeedScreen(
             onlyPreferred = false,
             onToggleDeals = {},
             onTogglePreferred = {},
-            onRefresh = { viewModel.refreshNews() }
+            onRefresh = { viewModel.refreshPodcasts() }
         )
 
         // Podcast Filter Bar (Audio vs Video vs Downloaded vs All)
@@ -282,7 +292,7 @@ fun PodcastFeedScreen(
                     }
                     BasicTextField(
                         value = searchQuery,
-                        onValueChange = { viewModel.searchQuery.value = it },
+                        onValueChange = { viewModel.podcastSearchQuery.value = it },
                         textStyle = MaterialTheme.typography.bodyLarge.copy(
                             color = NothingWhite,
                             fontFamily = FontFamily.Monospace,
@@ -295,7 +305,7 @@ fun PodcastFeedScreen(
                     )
                     if (searchQuery.isNotEmpty()) {
                         IconButton(
-                            onClick = { viewModel.searchQuery.value = "" },
+                            onClick = { viewModel.podcastSearchQuery.value = "" },
                             modifier = Modifier.size(20.dp)
                         ) {
                             Icon(
@@ -644,6 +654,7 @@ fun PodcastFeedScreen(
             }
         } else {
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 80.dp)
             ) {
@@ -684,7 +695,8 @@ fun PodcastFeedScreen(
                         },
                         onDislikeSwipe = { dislikedCluster ->
                             viewModel.dislikeCluster(dislikedCluster)
-                        }
+                        },
+                        onFlagNotPodcast = { articleToFlagNotPodcast = it }
                     )
                 }
 
@@ -829,10 +841,141 @@ fun PodcastFeedScreen(
         PodcastMediaDialog(
             article = activePodcastArticle!!,
             onDismiss = { activePodcastArticle = null },
+            onFlagNotPodcast = { articleToFlagNotPodcast = it },
             onOpenInBrowser = { url ->
                 val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
                 viewModel.closeArticleReader()
             }
+        )
+    }
+
+    // Flag Article as Not a Podcast confirmation dialog
+    if (articleToFlagNotPodcast != null) {
+        val article = articleToFlagNotPodcast!!
+        AlertDialog(
+            onDismissRequest = { articleToFlagNotPodcast = null },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Flag,
+                        contentDescription = "Flag not a podcast",
+                        tint = NothingRed,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "NOT A PODCAST?",
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        color = NothingWhite
+                    )
+                }
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "This item is not a podcast and will be removed from your podcast list and reclassified into your news feed:\n",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                        color = NothingTextMuted
+                    )
+                    Text(
+                        text = "\"${article.title}\"",
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        color = NothingWhite
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "Source Feed: ${article.feedTitle}",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        color = NothingRed
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Choose whether to move only this individual story, or reclassify the entire feed as news articles if it was mistakenly added as a podcast.",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        color = NothingTextMuted
+                    )
+                }
+            },
+            confirmButton = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            viewModel.flagArticleNotPodcast(article, reclassifyEntireFeed = false)
+                            articleToFlagNotPodcast = null
+                            if (activePodcastArticle?.id == article.id) {
+                                activePodcastArticle = null
+                            }
+                            Toast.makeText(context, "Moved to News feed", Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = NothingRed,
+                            contentColor = NothingWhite
+                        ),
+                        shape = RoundedCornerShape(4.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("confirm_flag_single_article")
+                    ) {
+                        Text(
+                            text = "MOVE THIS ITEM ONLY",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp
+                        )
+                    }
+                    Button(
+                        onClick = {
+                            viewModel.flagArticleNotPodcast(article, reclassifyEntireFeed = true)
+                            articleToFlagNotPodcast = null
+                            if (activePodcastArticle?.id == article.id) {
+                                activePodcastArticle = null
+                            }
+                            Toast.makeText(context, "Reclassified entire feed to News", Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = NothingSurface,
+                            contentColor = NothingRed
+                        ),
+                        border = BorderStroke(1.dp, NothingRed.copy(alpha = 0.6f)),
+                        shape = RoundedCornerShape(4.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("confirm_flag_entire_feed")
+                    ) {
+                        Text(
+                            text = "MOVE ENTIRE FEED TO NEWS",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { articleToFlagNotPodcast = null },
+                    modifier = Modifier.testTag("cancel_flag_podcast")
+                ) {
+                    Text(
+                        text = "CANCEL",
+                        fontFamily = FontFamily.Monospace,
+                        color = NothingTextMuted,
+                        fontSize = 11.sp
+                    )
+                }
+            },
+            containerColor = NothingDarkGray,
+            shape = RoundedCornerShape(8.dp)
         )
     }
 
@@ -862,7 +1005,7 @@ fun PodcastFeedScreen(
                         val urlToDelete = feed.url
                         feedToDelete = null
                         if (searchQuery.equals(feed.title, ignoreCase = true)) {
-                            viewModel.searchQuery.value = ""
+                            viewModel.podcastSearchQuery.value = ""
                         }
                         viewModel.deleteFeed(urlToDelete)
                     }

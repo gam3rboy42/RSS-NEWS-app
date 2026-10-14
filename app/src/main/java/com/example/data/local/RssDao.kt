@@ -22,6 +22,12 @@ interface RssDao {
     @Query("SELECT * FROM feeds WHERE isEnabled = 1")
     suspend fun getEnabledFeeds(): List<FeedEntity>
 
+    @Query("SELECT * FROM feeds WHERE isEnabled = 1 AND UPPER(category) = 'PODCASTS'")
+    suspend fun getEnabledPodcastFeeds(): List<FeedEntity>
+
+    @Query("SELECT * FROM feeds WHERE isEnabled = 1 AND UPPER(category) != 'PODCASTS'")
+    suspend fun getEnabledNewsFeeds(): List<FeedEntity>
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertDefaultFeeds(feeds: List<FeedEntity>)
 
@@ -73,12 +79,57 @@ interface RssDao {
     @Query("UPDATE articles SET subcategory = :subcategory WHERE id = :id")
     suspend fun updateArticleSubcategoryById(id: String, subcategory: String)
 
+    @Query("UPDATE articles SET category = :category, subcategory = :subcategory, isNpuCategorized = 1 WHERE id = :id")
+    suspend fun updateArticleCategoryAndSubcategoryById(id: String, category: String, subcategory: String)
+
     @Query("DELETE FROM feeds WHERE url = :url")
     suspend fun deleteFeedByUrl(url: String)
 
     // ARTICLES
     @Query("SELECT * FROM articles ORDER BY pubDateTimestamp DESC")
     fun getAllArticles(): Flow<List<ArticleEntity>>
+
+    @Query("""
+        SELECT * FROM articles 
+        WHERE UPPER(category) = 'PODCASTS' 
+           OR mediaType = 'AUDIO' 
+           OR (mediaUrl IS NOT NULL AND (
+               mediaUrl LIKE '%.mp3%' OR mediaUrl LIKE '%.m4a%' OR 
+               mediaUrl LIKE '%.ogg%' OR mediaUrl LIKE '%.wav%' OR 
+               mediaUrl LIKE '%.aac%' OR mediaUrl LIKE '%.flac%' OR mediaUrl LIKE '%.opus%'
+           ))
+           OR (link LIKE '%.mp3%' OR link LIKE '%.m4a%' OR link LIKE '%.ogg%')
+        ORDER BY pubDateTimestamp DESC
+    """)
+    fun getPodcastArticles(): Flow<List<ArticleEntity>>
+
+    @Query("""
+        SELECT * FROM articles 
+        WHERE UPPER(category) != 'PODCASTS' 
+          AND (mediaType IS NULL OR mediaType != 'AUDIO')
+          AND (mediaUrl IS NULL OR (
+              mediaUrl NOT LIKE '%.mp3%' AND mediaUrl NOT LIKE '%.m4a%' AND 
+              mediaUrl NOT LIKE '%.ogg%' AND mediaUrl NOT LIKE '%.wav%' AND 
+              mediaUrl NOT LIKE '%.aac%' AND mediaUrl NOT LIKE '%.flac%' AND mediaUrl NOT LIKE '%.opus%'
+          ))
+          AND (link NOT LIKE '%.mp3%' AND link NOT LIKE '%.m4a%' AND link NOT LIKE '%.ogg%')
+        ORDER BY pubDateTimestamp DESC
+    """)
+    fun getNewsArticles(): Flow<List<ArticleEntity>>
+
+    @Query("""
+        UPDATE articles 
+        SET isPodcast = 0, isVideoPodcast = 0 
+        WHERE UPPER(category) != 'PODCASTS' 
+          AND (mediaType IS NULL OR mediaType != 'AUDIO')
+          AND (mediaUrl IS NULL OR (
+              mediaUrl NOT LIKE '%.mp3%' AND mediaUrl NOT LIKE '%.m4a%' AND 
+              mediaUrl NOT LIKE '%.ogg%' AND mediaUrl NOT LIKE '%.wav%' AND 
+              mediaUrl NOT LIKE '%.aac%' AND mediaUrl NOT LIKE '%.flac%' AND mediaUrl NOT LIKE '%.opus%'
+          ))
+          AND (link NOT LIKE '%.mp3%' AND link NOT LIKE '%.m4a%' AND link NOT LIKE '%.ogg%')
+    """)
+    suspend fun cleanupMistaggedPodcastArticles()
 
     @Query("SELECT * FROM articles")
     suspend fun getAllArticlesList(): List<ArticleEntity>
@@ -115,6 +166,9 @@ interface RssDao {
 
     @Query("UPDATE articles SET imageUrl = :imageUrl WHERE id = :id")
     suspend fun updateArticleImageUrl(id: String, imageUrl: String?)
+
+    @Query("UPDATE articles SET content = :content, imageUrl = CASE WHEN (imageUrl IS NULL OR imageUrl = '') AND :imageUrl IS NOT NULL THEN :imageUrl ELSE imageUrl END WHERE id = :id")
+    suspend fun updateArticleFullContent(id: String, content: String, imageUrl: String? = null)
 
     @Query("UPDATE articles SET isSavedForOffline = :isSavedForOffline WHERE id = :id")
     suspend fun updateOfflineStatus(id: String, isSavedForOffline: Boolean)
@@ -160,4 +214,27 @@ interface RssDao {
 
     @Query("SELECT COUNT(*) FROM articles")
     suspend fun getArticleCount(): Int
+
+    @Query("""
+        UPDATE articles 
+        SET isPodcast = 0, 
+            isVideoPodcast = 0, 
+            mediaType = NULL, 
+            mediaUrl = NULL, 
+            category = :newCategory,
+            subcategory = :newSubcategory
+        WHERE id = :articleId
+    """)
+    suspend fun flagArticleNotPodcast(articleId: String, newCategory: String, newSubcategory: String)
+
+    @Query("""
+        UPDATE articles 
+        SET isPodcast = 0, 
+            isVideoPodcast = 0, 
+            mediaType = NULL, 
+            mediaUrl = NULL, 
+            category = :newCategory
+        WHERE feedUrl = :feedUrl
+    """)
+    suspend fun flagFeedArticlesNotPodcast(feedUrl: String, newCategory: String)
 }

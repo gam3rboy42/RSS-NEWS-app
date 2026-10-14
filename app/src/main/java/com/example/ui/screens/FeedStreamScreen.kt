@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -46,6 +47,8 @@ import com.example.data.local.ArticleEntity
 import com.example.data.model.StoryCluster
 import com.example.data.repository.SyncState
 import com.example.ui.components.ArticleCard
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
 import com.example.ui.components.SwipeableArticleCard
 import com.example.ui.components.CategoryPillBar
 import com.example.ui.components.DislikeAnalysisDialog
@@ -68,6 +71,7 @@ fun FeedStreamScreen(
     viewModel: RssViewModel,
     onArticleClick: (ArticleEntity) -> Unit
 ) {
+    val context = LocalContext.current
     val clusters by viewModel.storyClusters.collectAsState()
     val category by viewModel.selectedCategory.collectAsState()
     val availableCategories by viewModel.availableCategories.collectAsState()
@@ -88,6 +92,7 @@ fun FeedStreamScreen(
     val searchQuery by viewModel.searchQuery.collectAsState()
     val selectedClusterForSources by viewModel.selectedClusterForSources.collectAsState()
     val lastArchivedCluster by viewModel.lastArchivedCluster.collectAsState()
+    val listState = rememberLazyListState()
 
     Column(
         modifier = Modifier
@@ -289,6 +294,7 @@ fun FeedStreamScreen(
                 }
             } else {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(bottom = 80.dp)
                 ) {
@@ -323,6 +329,22 @@ fun FeedStreamScreen(
                             },
                             onDislikeSwipe = { dislikedCluster ->
                                 viewModel.dislikeCluster(dislikedCluster)
+                            },
+                            onTeachCategory = { article, newCat, newSubcat, updateFeed ->
+                                viewModel.teachAndLabelArticle(
+                                    articleId = article.id,
+                                    newCategory = newCat,
+                                    newSubcategory = newSubcat,
+                                    updateSourceFeed = updateFeed
+                                ) { success ->
+                                    if (success) {
+                                        Toast.makeText(
+                                            context,
+                                            "⚡ Trained NPU: Story labeled as '$newCat'!",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                }
                             }
                         )
                     }

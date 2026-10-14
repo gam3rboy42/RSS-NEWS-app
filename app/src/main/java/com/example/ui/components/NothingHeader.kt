@@ -40,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.repository.SyncState
+import com.example.ui.theme.DotMatrixFontFamily
 import com.example.ui.theme.NothingBlack
 import com.example.ui.theme.NothingBorder
 import com.example.ui.theme.NothingDealOrange
@@ -174,11 +175,11 @@ fun NothingHeader(
                 Column {
                     Text(
                         text = title.uppercase(),
-                        fontFamily = FontFamily.Monospace,
+                        fontFamily = DotMatrixFontFamily,
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Bold,
                         color = NothingWhite,
-                        letterSpacing = 1.sp
+                        letterSpacing = 1.25.sp
                     )
                     Text(
                         text = subtitle,

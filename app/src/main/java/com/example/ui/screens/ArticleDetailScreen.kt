@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import android.content.Intent
+import android.widget.Toast
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -29,12 +30,16 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.ThumbDown
 import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.DownloadForOffline
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.ThumbDown
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -59,6 +64,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.local.ArticleEntity
 import com.example.ui.components.calculateReadingTimeMinutes
+import com.example.ui.components.TeachCategoryDialog
 import com.example.ui.theme.NothingBlack
 import com.example.ui.theme.NothingBorder
 import com.example.ui.theme.NothingDarkGray
@@ -85,7 +91,14 @@ fun ArticleDetailScreen(
 ) {
     val context = LocalContext.current
     val fontSizeMultiplier by viewModel.fontSizeMultiplier.collectAsState()
+    val isDownloadingFullArticle by viewModel.isDownloadingFullArticle.collectAsState()
+    val isIncomplete = remember(article.content, article.description) {
+        com.example.util.WebpageArticleExtractor.isArticleIncomplete(article)
+    }
     var showPodcastDialog by remember { mutableStateOf(false) }
+    var showTeachCategoryDialog by remember { mutableStateOf(false) }
+    var currentCategory by remember(article.id, article.category) { mutableStateOf(article.category) }
+    var currentSubcategory by remember(article.id, article.subcategory) { mutableStateOf(article.subcategory) }
 
     val titleSize = (20 * fontSizeMultiplier).sp
     val bodySize = (15 * fontSizeMultiplier).sp
@@ -212,19 +225,84 @@ fun ArticleDetailScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(NothingSurfaceVariant)
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                ) {
-                    Text(
-                        text = article.category.uppercase(),
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = NothingRed
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    val catText = if (currentSubcategory.isNotBlank() && currentSubcategory != "GENERAL") {
+                        "${currentCategory.uppercase()} / ${currentSubcategory.uppercase()}"
+                    } else {
+                        currentCategory.uppercase()
+                    }
+                    Box(
+                        modifier = Modifier
+                            .testTag("detail_category_badge")
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(NothingSurfaceVariant)
+                            .clickable { showTeachCategoryDialog = true }
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = catText,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = NothingRed
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "✎",
+                                fontSize = 9.sp,
+                                color = NothingTextMuted
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(6.dp))
+
+                    Box(
+                        modifier = Modifier
+                            .testTag("detail_teach_category_button")
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(NothingSurface)
+                            .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
+                            .clickable { showTeachCategoryDialog = true }
+                            .padding(horizontal = 6.dp, vertical = 3.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Memory,
+                                contentDescription = "Teach NPU",
+                                tint = NothingRed,
+                                modifier = Modifier.size(11.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "TEACH NPU",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = NothingWhite
+                            )
+                        }
+                    }
+
+                    if (article.isNpuCategorized) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(NothingSurface)
+                                .border(1.dp, NothingRed.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 6.dp, vertical = 3.dp)
+                        ) {
+                            Text(
+                                text = "⚡ NPU ACCELERATED",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = NothingRed
+                            )
+                        }
+                    }
                 }
 
                 Text(
@@ -317,9 +395,15 @@ fun ArticleDetailScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             // Podcast / Media Action Banner if applicable
-            if (article.isPodcast || article.isVideoPodcast || article.mediaType == "AUDIO" || article.mediaType == "VIDEO") {
-                val detailMediaUrl = (article.mediaUrl ?: article.link).lowercase()
-                val isAudioMedia = article.mediaType == "AUDIO" || detailMediaUrl.contains(".mp3") || detailMediaUrl.contains(".m4a") || detailMediaUrl.contains(".ogg") || detailMediaUrl.contains(".wav")
+            val hasDetailAudio = article.mediaType.equals("AUDIO", ignoreCase = true) ||
+                    (article.mediaUrl?.let { m -> m.contains(".mp3") || m.contains(".m4a") || m.contains(".ogg") || m.contains(".wav") || m.contains(".aac") || m.contains(".flac") } == true) ||
+                    article.link.endsWith(".mp3") || article.link.endsWith(".m4a")
+            val isDetailPodFolder = article.category.equals("PODCASTS", ignoreCase = true)
+            val isDetailPodcastOrAudio = isDetailPodFolder || hasDetailAudio || (article.isVideoPodcast && isDetailPodFolder)
+
+            if (isDetailPodcastOrAudio) {
+                val detailMediaUrl = (article.mediaUrl ?: if (hasDetailAudio) article.link else "").lowercase()
+                val isAudioMedia = hasDetailAudio || article.mediaType == "AUDIO" || detailMediaUrl.contains(".mp3") || detailMediaUrl.contains(".m4a") || detailMediaUrl.contains(".ogg") || detailMediaUrl.contains(".wav")
                 val isVid = !isAudioMedia && (article.isVideoPodcast || article.mediaType == "VIDEO" || detailMediaUrl.contains(".mp4") || detailMediaUrl.contains(".m4v"))
                 Box(
                     modifier = Modifier
@@ -385,6 +469,105 @@ fun ArticleDetailScreen(
                 Spacer(modifier = Modifier.height(20.dp))
             }
 
+            // Full Webpage Extraction Status / Action Banners
+            if (isDownloadingFullArticle) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(NothingDarkGray)
+                        .border(1.dp, NothingRed, RoundedCornerShape(4.dp))
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = NothingRed
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "DOWNLOADING FULL WEBPAGE ARTICLE...",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = NothingWhite
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            } else if (isIncomplete) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(NothingSurface)
+                        .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "⚡ RSS SNIPPET / TRUNCATED STORY",
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                color = NothingDealOrange
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Feed only provides a brief summary. Tap to download the full webpage.",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                color = NothingTextMuted
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = { viewModel.loadFullArticleWebpage(article) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = NothingRed,
+                                contentColor = NothingWhite
+                            ),
+                            shape = RoundedCornerShape(4.dp),
+                            modifier = Modifier.testTag("download_full_webpage_button")
+                        ) {
+                            Text(
+                                text = "DOWNLOAD FULL",
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.sp
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            } else if (article.content.length > 500) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(NothingRed)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "FULL ARTICLE VIEW (${article.content.split(Regex("\\s+")).filter { it.isNotBlank() }.size} WORDS)",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = NothingTextMuted
+                    )
+                }
+            }
+
             // Main Text Content
             val displayContent = article.content.ifBlank { article.description }
             Text(
@@ -428,6 +611,44 @@ fun ArticleDetailScreen(
                         tint = NothingRed,
                         modifier = Modifier.size(16.dp)
                     )
+                }
+            }
+
+            // Flag as Not a Podcast button if the article is marked as podcast
+            if (article.isPodcast || article.isVideoPodcast || article.category.equals("PODCASTS", ignoreCase = true)) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    onClick = {
+                        viewModel.flagArticleNotPodcast(article)
+                        Toast.makeText(context, "Flagged & moved to News feed", Toast.LENGTH_SHORT).show()
+                        onBackClick()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = NothingSurface,
+                        contentColor = NothingRed
+                    ),
+                    border = BorderStroke(1.dp, NothingRed.copy(alpha = 0.6f)),
+                    shape = RoundedCornerShape(4.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .testTag("reader_flag_not_podcast_button")
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Flag,
+                            contentDescription = "Flag not a podcast",
+                            tint = NothingRed,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "⚠ NOT A PODCAST (MOVE TO NEWS FEED)",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp
+                        )
+                    }
                 }
             }
 
@@ -675,6 +896,35 @@ fun ArticleDetailScreen(
             article = article,
             onDismiss = { showPodcastDialog = false },
             onOpenInBrowser = { url -> InAppBrowser.openUrl(context, url) }
+        )
+    }
+
+    if (showTeachCategoryDialog) {
+        TeachCategoryDialog(
+            itemTitle = article.title,
+            currentCategory = currentCategory,
+            currentSubcategory = currentSubcategory,
+            sourceFeedName = article.feedTitle,
+            isFeedLevel = false,
+            onDismiss = { showTeachCategoryDialog = false },
+            onSaveAndTrain = { newCat, newSubcat, updateFeed ->
+                viewModel.teachAndLabelArticle(
+                    articleId = article.id,
+                    newCategory = newCat,
+                    newSubcategory = newSubcat,
+                    updateSourceFeed = updateFeed
+                ) { success ->
+                    if (success) {
+                        currentCategory = newCat
+                        currentSubcategory = newSubcat
+                        Toast.makeText(
+                            context,
+                            "⚡ On-device NPU trained with category '$newCat'!",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            }
         )
     }
 }

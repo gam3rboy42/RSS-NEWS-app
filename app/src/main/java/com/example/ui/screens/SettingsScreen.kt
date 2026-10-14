@@ -67,6 +67,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.DotMatrixFontFamily
 import com.example.ui.theme.NothingBlack
 import com.example.ui.theme.NothingBorder
 import com.example.ui.theme.NothingDarkGray
@@ -209,9 +210,10 @@ fun SettingsScreen(viewModel: RssViewModel) {
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
                     text = "FEED & DEAL SETTINGS",
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = DotMatrixFontFamily,
                     fontSize = 22.sp,
                     fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.25.sp,
                     color = NothingWhite
                 )
             }
@@ -226,6 +228,276 @@ fun SettingsScreen(viewModel: RssViewModel) {
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 80.dp)
         ) {
+            // ON-DEVICE TPU / NPU ACCELERATED CATEGORIZATION
+            item {
+                var isRunningNpuCategorization by remember { mutableStateOf(false) }
+                var npuCategorizeResultMsg by remember { mutableStateOf<String?>(null) }
+                val npuInfo = viewModel.npuHardwareInfo
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(NothingDarkGray)
+                        .border(1.dp, NothingRed.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                        .padding(16.dp)
+                ) {
+                    Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "⚡ TPU / NPU CATEGORIZATION",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = NothingRed
+                                )
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(NothingDarkGray)
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "ACTIVE",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = NothingWhite
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Text(
+                            text = "Runs real-time vectorized neural tensor inference on-device. Evaluates and correctly categorizes both feeds and individual stories on the fly so your entire library and news stream are accurately labeled.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = NothingTextMuted,
+                            fontSize = 12.sp
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Accelerator Telemetry Box
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(NothingSurface)
+                                .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
+                                .padding(10.dp)
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "ACCELERATOR:",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 10.sp,
+                                        color = NothingTextMuted
+                                    )
+                                    Text(
+                                        text = npuInfo.acceleratorType.uppercase(),
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = NothingRed
+                                    )
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "TENSOR PIPELINE:",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 10.sp,
+                                        color = NothingTextMuted
+                                    )
+                                    Text(
+                                        text = "${npuInfo.precision} (${npuInfo.availableCores} Cores)",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 10.sp,
+                                        color = NothingWhite
+                                    )
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "LATENCY PER ITEM:",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 10.sp,
+                                        color = NothingTextMuted
+                                    )
+                                    Text(
+                                        text = "~${npuInfo.avgLatencyMicroseconds} µs (Real-Time)",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 10.sp,
+                                        color = NothingWhite
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Continual Learning Telemetry
+                        val learningStats = remember(isRunningNpuCategorization) {
+                            viewModel.getNpuModelLearningStats()
+                        }
+                        var statsRefreshTrigger by remember { mutableStateOf(0) }
+                        val activeLearningStats = remember(statsRefreshTrigger, isRunningNpuCategorization) {
+                            viewModel.getNpuModelLearningStats()
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(NothingSurface)
+                                .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
+                                .padding(10.dp)
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "USER-TAUGHT SAMPLES:",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 10.sp,
+                                        color = NothingTextMuted
+                                    )
+                                    Text(
+                                        text = "${activeLearningStats.totalSamplesLearned} Corrections",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = NothingWhite
+                                    )
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "LEARNED TOKEN WEIGHTS:",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 10.sp,
+                                        color = NothingTextMuted
+                                    )
+                                    Text(
+                                        text = "${activeLearningStats.totalTokensTrained} Keywords",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 10.sp,
+                                        color = NothingRed
+                                    )
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "LEARNED DOMAIN PRIORS:",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 10.sp,
+                                        color = NothingTextMuted
+                                    )
+                                    Text(
+                                        text = "${activeLearningStats.totalDomainsTrained} Feeds",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 10.sp,
+                                        color = NothingWhite
+                                    )
+                                }
+
+                                if (activeLearningStats.totalSamplesLearned > 0) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.End
+                                    ) {
+                                        Text(
+                                            text = "[ RESET LEARNED WEIGHTS ]",
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = NothingRed,
+                                            modifier = Modifier
+                                                .clickable {
+                                                    viewModel.resetNpuLearnedWeights()
+                                                    statsRefreshTrigger++
+                                                    Toast.makeText(context, "Learned NPU weights reset to baseline", Toast.LENGTH_SHORT).show()
+                                                }
+                                                .padding(vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Button(
+                            onClick = {
+                                isRunningNpuCategorization = true
+                                viewModel.runNpuCategorizationOnAllFeedsAndStories { summary ->
+                                    isRunningNpuCategorization = false
+                                    val msg = "Classified ${summary.feedsClassified} feeds & ${summary.storiesClassified} stories in ${summary.executionTimeMs}ms via ${summary.hardwareEngine}!"
+                                    npuCategorizeResultMsg = msg
+                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            enabled = !isRunningNpuCategorization,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = NothingDarkGray,
+                                contentColor = NothingWhite
+                            ),
+                            shape = RoundedCornerShape(4.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, NothingRed, RoundedCornerShape(4.dp))
+                                .testTag("run_npu_categorization_button")
+                        ) {
+                            Text(
+                                text = if (isRunningNpuCategorization) "SCANNING WITH TPU/NPU..." else "⚡ RUN TPU/NPU SCAN ON ALL FEEDS & STORIES",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = NothingWhite
+                            )
+                        }
+
+                        if (npuCategorizeResultMsg != null) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = npuCategorizeResultMsg!!,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                color = NothingRed
+                            )
+                        }
+                    }
+                }
+            }
+
             // DEAL FILTERING RULE
             item {
                 Box(
@@ -1664,6 +1936,7 @@ fun SettingsScreen(viewModel: RssViewModel) {
             availableCategories = availableCategories,
             onDismiss = { editingFeedForFolder = null },
             onSaveFeed = { newTitle, newUrl, newCategory, newIconUrl, newIsPreferred, newPreferredScope ->
+                viewModel.teachAndLabelFeed(newUrl, newCategory)
                 viewModel.updateFeedDetails(
                     oldFeed = editingFeedForFolder!!,
                     newTitle = newTitle,

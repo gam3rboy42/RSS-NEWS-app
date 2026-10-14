@@ -65,6 +65,7 @@ import com.example.data.model.DefaultFeedCatalog
 import com.example.data.model.FeedDiscoveryItem
 import com.example.ui.components.CategoryAssignDialog
 import com.example.ui.components.CategoryPillBar
+import com.example.ui.theme.DotMatrixFontFamily
 import com.example.ui.theme.NothingBlack
 import com.example.ui.theme.NothingBorder
 import com.example.ui.theme.NothingDarkGray
@@ -248,9 +249,10 @@ fun FeedDiscoveryScreen(viewModel: RssViewModel) {
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
                     text = "DISCOVER & MANAGE FEEDS",
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = DotMatrixFontFamily,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.25.sp,
                     color = NothingWhite
                 )
             }
@@ -973,6 +975,7 @@ fun FeedDiscoveryScreen(viewModel: RssViewModel) {
             availableCategories = availableCategories,
             onDismiss = { editingFeedForFolder = null },
             onSaveFeed = { newTitle, newUrl, newCategory, newIconUrl, newIsPreferred, newPreferredScope ->
+                viewModel.teachAndLabelFeed(newUrl, newCategory)
                 viewModel.updateFeedDetails(
                     oldFeed = editingFeedForFolder!!,
                     newTitle = newTitle,

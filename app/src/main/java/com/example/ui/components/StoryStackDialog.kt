@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.data.local.ArticleEntity
 import com.example.data.model.StoryCluster
+import com.example.ui.theme.DotMatrixFontFamily
 import com.example.ui.theme.NothingBlack
 import com.example.ui.theme.NothingBorder
 import com.example.ui.theme.NothingDarkGray
@@ -97,9 +98,10 @@ fun StoryStackDialog(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = "STACKED STORY SOURCES",
-                            fontFamily = FontFamily.Monospace,
+                            fontFamily = DotMatrixFontFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp,
+                            letterSpacing = 1.sp,
                             color = NothingWhite
                         )
                     }

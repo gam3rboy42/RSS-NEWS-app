@@ -125,46 +125,46 @@ class MainActivity : ComponentActivity() {
                             .background(NothingBlack)
                             .padding(innerPadding)
                     ) {
+                        AnimatedContent(
+                            targetState = currentRoute,
+                            label = "ScreenTransition"
+                        ) { targetRoute ->
+                            when (targetRoute) {
+                                is ScreenRoute.Stream -> {
+                                    FeedStreamScreen(
+                                        viewModel = viewModel,
+                                        onArticleClick = { /* Article set in ViewModel */ }
+                                    )
+                                }
+                                is ScreenRoute.Podcasts -> {
+                                    PodcastFeedScreen(
+                                        viewModel = viewModel,
+                                        onNavigateToDiscover = {
+                                            routeBackStack = routeBackStack.filter { it != ScreenRoute.Discover } + ScreenRoute.Discover
+                                        }
+                                    )
+                                }
+                                is ScreenRoute.Discover -> {
+                                    FeedDiscoveryScreen(viewModel = viewModel)
+                                }
+                                is ScreenRoute.Bookmarks -> {
+                                    FeedStreamScreen(
+                                        viewModel = viewModel,
+                                        onArticleClick = { /* Article set in ViewModel */ }
+                                    )
+                                }
+                                is ScreenRoute.Settings -> {
+                                    SettingsScreen(viewModel = viewModel)
+                                }
+                            }
+                        }
+
                         if (activeArticle != null) {
                             ArticleDetailScreen(
                                 article = activeArticle!!,
                                 viewModel = viewModel,
                                 onBackClick = { viewModel.closeArticleReader() }
                             )
-                        } else {
-                            AnimatedContent(
-                                targetState = currentRoute,
-                                label = "ScreenTransition"
-                            ) { targetRoute ->
-                                when (targetRoute) {
-                                    is ScreenRoute.Stream -> {
-                                        FeedStreamScreen(
-                                            viewModel = viewModel,
-                                            onArticleClick = { /* Article set in ViewModel */ }
-                                        )
-                                    }
-                                    is ScreenRoute.Podcasts -> {
-                                        PodcastFeedScreen(
-                                            viewModel = viewModel,
-                                            onNavigateToDiscover = {
-                                                routeBackStack = routeBackStack.filter { it != ScreenRoute.Discover } + ScreenRoute.Discover
-                                            }
-                                        )
-                                    }
-                                    is ScreenRoute.Discover -> {
-                                        FeedDiscoveryScreen(viewModel = viewModel)
-                                    }
-                                    is ScreenRoute.Bookmarks -> {
-                                        FeedStreamScreen(
-                                            viewModel = viewModel,
-                                            onArticleClick = { /* Article set in ViewModel */ }
-                                        )
-                                    }
-                                    is ScreenRoute.Settings -> {
-                                        SettingsScreen(viewModel = viewModel)
-                                    }
-                                }
-                            }
                         }
 
                         // Expanded Podcast Media Overlay
@@ -172,6 +172,10 @@ class MainActivity : ComponentActivity() {
                             PodcastMediaDialog(
                                 article = expandedPodcastArticle!!,
                                 onDismiss = { expandedPodcastArticle = null },
+                                onFlagNotPodcast = { art ->
+                                    viewModel.flagArticleNotPodcast(art)
+                                    expandedPodcastArticle = null
+                                },
                                 onOpenInBrowser = { url ->
                                     val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))
                                     startActivity(intent)

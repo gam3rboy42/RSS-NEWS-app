@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DownloadDone
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.OpenInBrowser
@@ -75,6 +76,7 @@ import coil.compose.AsyncImage
 import androidx.compose.foundation.layout.fillMaxSize
 import com.example.data.local.ArticleEntity
 import com.example.service.PodcastPlayerManager
+import com.example.ui.theme.DotMatrixFontFamily
 import com.example.ui.theme.NothingBlack
 import com.example.ui.theme.NothingBorder
 import com.example.ui.theme.NothingDarkGray
@@ -104,7 +106,8 @@ import kotlinx.coroutines.withContext
 fun PodcastMediaDialog(
     article: ArticleEntity,
     onDismiss: () -> Unit,
-    onOpenInBrowser: (String) -> Unit
+    onOpenInBrowser: (String) -> Unit,
+    onFlagNotPodcast: ((ArticleEntity) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -191,9 +194,10 @@ fun PodcastMediaDialog(
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = if (isVideo) "🎥 VIDEO PODCAST PLAYER" else "🎧 BACKGROUND PODCAST PLAYER",
-                            fontFamily = FontFamily.Monospace,
+                            fontFamily = DotMatrixFontFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,
+                            letterSpacing = 0.75.sp,
                             color = NothingWhite,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -769,6 +773,41 @@ fun PodcastMediaDialog(
                         Icon(imageVector = Icons.Default.OpenInBrowser, contentDescription = "Open Link", modifier = Modifier.size(13.dp))
                         Spacer(modifier = Modifier.width(4.dp))
                         Text("WEB", fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+                    }
+
+                    if (onFlagNotPodcast != null) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Button(
+                            onClick = {
+                                onFlagNotPodcast(currentArticleState)
+                                onDismiss()
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = NothingSurface,
+                                contentColor = NothingRed
+                            ),
+                            border = BorderStroke(1.dp, NothingRed.copy(alpha = 0.6f)),
+                            shape = RoundedCornerShape(4.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(38.dp)
+                                .testTag("dialog_flag_not_podcast_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Flag,
+                                contentDescription = "Flag not a podcast",
+                                tint = NothingRed,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "⚠ NOT A PODCAST (MOVE TO NEWS)",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = NothingRed
+                            )
+                        }
                     }
                 }
             }

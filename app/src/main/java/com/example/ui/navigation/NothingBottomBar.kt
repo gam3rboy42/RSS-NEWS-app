@@ -42,6 +42,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.DotMatrixFontFamily
 import com.example.ui.theme.NothingBlack
 import com.example.ui.theme.NothingBorder
 import com.example.ui.theme.NothingRed
@@ -109,9 +110,10 @@ fun NothingBottomBar(
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
                             text = item.label,
-                            fontFamily = FontFamily.Monospace,
+                            fontFamily = DotMatrixFontFamily,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                             fontSize = 10.sp,
+                            letterSpacing = 0.5.sp,
                             color = if (isSelected) NothingWhite else NothingTextSecondary
                         )
                     }

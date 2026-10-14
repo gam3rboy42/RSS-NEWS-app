@@ -64,7 +64,7 @@ object RssXmlParser {
                 val name = parser.name?.lowercase(Locale.ROOT) ?: ""
                 when {
                     name == "title" -> if (feedTitle.isEmpty() || feedTitle == "Feed" || feedTitle == defaultFeedTitle) {
-                        val parsedTitle = readText(parser)
+                        val parsedTitle = com.example.util.HtmlSanitizer.cleanText(readText(parser))
                         if (parsedTitle.isNotBlank()) feedTitle = parsedTitle
                     }
                     name == "description" -> if (feedDescription.isEmpty()) {
@@ -127,7 +127,7 @@ object RssXmlParser {
             if (eventType == XmlPullParser.START_TAG) {
                 val tagName = parser.name?.lowercase(Locale.ROOT) ?: ""
                 when {
-                    tagName == "title" -> title = readText(parser)
+                    tagName == "title" -> title = com.example.util.HtmlSanitizer.cleanText(readText(parser))
                     tagName == "link" -> {
                         val text = readText(parser)
                         if (text.isNotBlank()) link = text
@@ -148,12 +148,26 @@ object RssXmlParser {
                         if (imageUrl == null) {
                             imageUrl = extractImageFromHtml(rawDesc)
                         }
+                        if (mediaUrl == null) {
+                            val audio = extractAudioFromHtml(rawDesc)
+                            if (audio != null) {
+                                mediaUrl = audio
+                                mediaType = "AUDIO"
+                            }
+                        }
                     }
                     tagName == "content:encoded" || tagName == "content" -> {
                         val rawContent = readText(parser)
                         content = stripHtml(rawContent)
                         if (imageUrl == null) {
                             imageUrl = extractImageFromHtml(rawContent)
+                        }
+                        if (mediaUrl == null) {
+                            val audio = extractAudioFromHtml(rawContent)
+                            if (audio != null) {
+                                mediaUrl = audio
+                                mediaType = "AUDIO"
+                            }
                         }
                     }
                     tagName == "pubdate" || tagName == "dc:date" || tagName == "published" || tagName == "updated" -> pubDateStr = readText(parser)
@@ -212,7 +226,14 @@ object RssXmlParser {
         val finalLink = link.ifBlank { guid }
         val cleanDesc = description.ifBlank { content.take(200) }
         val timestamp = parsePubDate(pubDateStr)
-        val analyzedSubcat = com.example.data.model.SubcategoryAnalyzer.analyze(title, cleanDesc, category)
+        val npuResult = com.example.data.model.NpuTensorCategorizer.classifyStory(
+            title = title.trim(),
+            description = cleanDesc,
+            content = content,
+            feedCategory = category
+        )
+        val finalCategory = if (category.equals("PODCASTS", ignoreCase = true)) category else npuResult.category
+        val analyzedSubcat = npuResult.subcategory
 
         val lowerLink = finalLink.lowercase(Locale.ROOT)
         val lowerMediaUrl = (mediaUrl ?: "").lowercase(Locale.ROOT)
@@ -221,6 +242,7 @@ object RssXmlParser {
                 lowerMediaUrl.contains(".mp3") || lowerMediaUrl.contains(".m4a") ||
                 lowerMediaUrl.contains(".ogg") || lowerMediaUrl.contains(".wav") ||
                 lowerMediaUrl.contains(".aac") || lowerMediaUrl.contains(".flac") ||
+                lowerMediaUrl.contains(".opus") ||
                 lowerLink.contains(".mp3") || lowerLink.contains(".m4a")
 
         val isVideo = !isAudio && (
@@ -230,35 +252,40 @@ object RssXmlParser {
                 lowerLink.contains(".m4v")
         )
 
-        val isPodcastItem = category.equals("PODCASTS", ignoreCase = true) || isVideo || isAudio || mediaType == "AUDIO" || mediaType == "VIDEO" || !duration.isNullOrBlank()
+        // Strict podcast item flag: true only if in PODCASTS category folder, or audio file pulled, or video in PODCASTS
+        val isPodcastItem = finalCategory.equals("PODCASTS", ignoreCase = true) || isAudio || (isVideo && finalCategory.equals("PODCASTS", ignoreCase = true))
 
         val finalMediaUrl = mediaUrl ?: if (isVideo || isAudio) finalLink else null
         val finalMediaType = if (isAudio) "AUDIO" else if (isVideo) "VIDEO" else mediaType
 
-        return ArticleEntity(
-            id = articleId,
-            feedUrl = feedUrl,
-            feedTitle = feedTitle,
-            category = category,
-            title = title.trim(),
-            description = cleanDesc.trim(),
-            content = content.ifBlank { description }.trim(),
-            link = finalLink.trim(),
-            pubDate = formatTimestamp(timestamp),
-            pubDateTimestamp = timestamp,
-            imageUrl = imageUrl,
-            author = author,
-            isBookmarked = false,
-            isRead = false,
-            isDeal = false,
-            isPreferredSource = isPreferredSource,
-            storyClusterHash = "",
-            subcategory = analyzedSubcat,
-            mediaUrl = finalMediaUrl,
-            mediaType = finalMediaType,
-            isPodcast = isPodcastItem,
-            isVideoPodcast = isVideo,
-            duration = duration
+        return com.example.util.HtmlSanitizer.sanitizeArticle(
+            ArticleEntity(
+                id = articleId,
+                feedUrl = feedUrl,
+                feedTitle = feedTitle,
+                category = finalCategory,
+                title = title.trim(),
+                description = cleanDesc.trim(),
+                content = content.ifBlank { description }.trim(),
+                link = finalLink.trim(),
+                pubDate = formatTimestamp(timestamp),
+                pubDateTimestamp = timestamp,
+                imageUrl = imageUrl,
+                author = author,
+                isBookmarked = false,
+                isRead = false,
+                isDeal = false,
+                isPreferredSource = isPreferredSource,
+                storyClusterHash = "",
+                subcategory = analyzedSubcat,
+                mediaUrl = finalMediaUrl,
+                mediaType = finalMediaType,
+                isPodcast = isPodcastItem,
+                isVideoPodcast = isVideo,
+                duration = duration,
+                isNpuCategorized = npuResult.isReclassified,
+                npuConfidence = npuResult.confidence
+            )
         )
     }
 
@@ -319,7 +346,7 @@ object RssXmlParser {
             if (eventType == XmlPullParser.START_TAG) {
                 val tagName = parser.name?.lowercase(Locale.ROOT) ?: ""
                 when {
-                    tagName == "title" -> title = readText(parser)
+                    tagName == "title" -> title = com.example.util.HtmlSanitizer.cleanText(readText(parser))
                     tagName == "id" -> id = readText(parser)
                     tagName == "author" || tagName == "dc:creator" || tagName == "creator" -> author = cleanAuthor(readText(parser))
                     tagName == "link" -> {
@@ -354,35 +381,63 @@ object RssXmlParser {
         val finalLink = link.ifBlank { id }
         val timestamp = parsePubDate(updated)
         val cleanDesc = summary.ifBlank { content.take(200) }.trim()
-        val analyzedSubcat = com.example.data.model.SubcategoryAnalyzer.analyze(title, cleanDesc, category)
-
-        val isVideo = link.endsWith(".mp4") || link.endsWith(".m4v")
-        val isAudio = link.endsWith(".mp3") || link.endsWith(".m4a")
-        val isPodcastItem = category.equals("PODCASTS", ignoreCase = true) || isVideo || isAudio
-
-        return ArticleEntity(
-            id = articleId,
-            feedUrl = feedUrl,
-            feedTitle = feedTitle,
-            category = category,
+        val npuResult = com.example.data.model.NpuTensorCategorizer.classifyStory(
             title = title.trim(),
             description = cleanDesc,
-            content = content.ifBlank { summary }.trim(),
-            link = link.trim(),
-            pubDate = formatTimestamp(timestamp),
-            pubDateTimestamp = timestamp,
-            imageUrl = imageUrl,
-            author = author,
-            isBookmarked = false,
-            isRead = false,
-            isDeal = false,
-            isPreferredSource = isPreferredSource,
-            storyClusterHash = "",
-            subcategory = analyzedSubcat,
-            mediaUrl = if (isVideo || isAudio) link.trim() else null,
-            mediaType = if (isVideo) "VIDEO" else if (isAudio) "AUDIO" else null,
-            isPodcast = isPodcastItem,
-            isVideoPodcast = isVideo
+            content = content,
+            feedCategory = category
+        )
+        val finalCategory = if (category.equals("PODCASTS", ignoreCase = true)) category else npuResult.category
+        val analyzedSubcat = npuResult.subcategory
+
+        val lowerLink = link.lowercase(Locale.ROOT)
+        var atomMediaUrl: String? = null
+        var atomMediaType: String? = null
+
+        val extractedAudio = extractAudioFromHtml(content) ?: extractAudioFromHtml(summary)
+        if (!extractedAudio.isNullOrBlank()) {
+            atomMediaUrl = extractedAudio
+            atomMediaType = "AUDIO"
+        }
+
+        val isAudio = atomMediaType == "AUDIO" ||
+                lowerLink.endsWith(".mp3") || lowerLink.endsWith(".m4a") ||
+                lowerLink.endsWith(".ogg") || lowerLink.endsWith(".wav") ||
+                lowerLink.contains(".mp3?") || lowerLink.contains(".m4a?")
+
+        val isVideo = !isAudio && (lowerLink.endsWith(".mp4") || lowerLink.endsWith(".m4v")) && finalCategory.equals("PODCASTS", ignoreCase = true)
+        val isPodcastItem = finalCategory.equals("PODCASTS", ignoreCase = true) || isAudio
+
+        val finalMediaUrl = atomMediaUrl ?: if (isVideo || isAudio) link.trim() else null
+        val finalMediaType = if (isAudio) "AUDIO" else if (isVideo) "VIDEO" else null
+
+        return com.example.util.HtmlSanitizer.sanitizeArticle(
+            ArticleEntity(
+                id = articleId,
+                feedUrl = feedUrl,
+                feedTitle = feedTitle,
+                category = finalCategory,
+                title = title.trim(),
+                description = cleanDesc,
+                content = content.ifBlank { summary }.trim(),
+                link = link.trim(),
+                pubDate = formatTimestamp(timestamp),
+                pubDateTimestamp = timestamp,
+                imageUrl = imageUrl,
+                author = author,
+                isBookmarked = false,
+                isRead = false,
+                isDeal = false,
+                isPreferredSource = isPreferredSource,
+                storyClusterHash = "",
+                subcategory = analyzedSubcat,
+                mediaUrl = if (isVideo || isAudio) link.trim() else null,
+                mediaType = if (isVideo) "VIDEO" else if (isAudio) "AUDIO" else null,
+                isPodcast = isPodcastItem,
+                isVideoPodcast = isVideo,
+                isNpuCategorized = npuResult.isReclassified,
+                npuConfidence = npuResult.confidence
+            )
         )
     }
 
@@ -395,6 +450,9 @@ object RssXmlParser {
     private val REGEX_APOS = Regex("&#39;|&#8217;")
     private val REGEX_MULTI_SPACE = Regex("\\s+")
     private val REGEX_IMG_SRC = Regex("""<img[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+    private val REGEX_AUDIO_ENCLOSURE = Regex("""<(?:audio|source)[^>]+src=["']([^"']+\.(?:mp3|m4a|ogg|wav|aac|flac|opus)[^"']*)["']""", RegexOption.IGNORE_CASE)
+    private val REGEX_AUDIO_HREF = Regex("""<a[^>]+href=["']([^"']+\.(?:mp3|m4a|ogg|wav|aac|flac|opus)[^"']*)["']""", RegexOption.IGNORE_CASE)
+    private val REGEX_AUDIO_DIRECT = Regex("""https?://[^\s"'<>]+\.(?:mp3|m4a|ogg|wav|aac|flac|opus)(?:\?[^\s"'<>]*)?""", RegexOption.IGNORE_CASE)
     private val REGEX_EMAIL = Regex("""[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}""")
     private val REGEX_PAREN_CONTENT = Regex("""\(([^)]+)\)""")
 
@@ -456,24 +514,23 @@ object RssXmlParser {
     }
 
     private fun stripHtml(html: String): String {
-        if (html.isBlank()) return ""
-        if (!html.contains('<') && !html.contains('&')) return html.trim()
-
-        return html.replace(REGEX_HTML_TAGS, " ")
-            .replace(REGEX_NBSP, " ")
-            .replace(REGEX_AMP, "&")
-            .replace(REGEX_LT, "<")
-            .replace(REGEX_GT, ">")
-            .replace(REGEX_QUOT, "\"")
-            .replace(REGEX_APOS, "'")
-            .replace(REGEX_MULTI_SPACE, " ")
-            .trim()
+        return com.example.util.HtmlSanitizer.cleanText(html)
     }
 
     private fun extractImageFromHtml(html: String): String? {
         if (html.isBlank() || !html.contains("<img", ignoreCase = true)) return null
         val match = REGEX_IMG_SRC.find(html)
         return match?.groupValues?.get(1)
+    }
+
+    private fun extractAudioFromHtml(html: String): String? {
+        if (html.isBlank()) return null
+        val matchAudioTag = REGEX_AUDIO_ENCLOSURE.find(html)
+        if (matchAudioTag != null) return matchAudioTag.groupValues[1]
+        val matchHref = REGEX_AUDIO_HREF.find(html)
+        if (matchHref != null) return matchHref.groupValues[1]
+        val matchDirect = REGEX_AUDIO_DIRECT.find(html)
+        return matchDirect?.value
     }
 
     private fun parsePubDate(dateStr: String): Long {

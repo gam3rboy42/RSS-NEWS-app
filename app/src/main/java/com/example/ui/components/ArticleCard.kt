@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.DownloadForOffline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.ThumbDown
 import androidx.compose.material.icons.outlined.BookmarkBorder
@@ -90,11 +91,14 @@ fun ArticleCard(
     onLikeToggle: (String, Boolean) -> Unit = { _, _ -> },
     onDislikeToggle: (String, Boolean) -> Unit = { _, _ -> },
     onSubscribeFeed: (String, String, String) -> Unit = { _, _, _ -> },
-    onDeleteFeed: ((String) -> Unit)? = null
+    onDeleteFeed: ((String) -> Unit)? = null,
+    onTeachCategory: ((ArticleEntity, String, String, Boolean) -> Unit)? = null,
+    onFlagNotPodcast: ((ArticleEntity) -> Unit)? = null
 ) {
     var isExpanded by rememberSaveable(cluster.clusterId) { mutableStateOf(false) }
     var showPodcastMediaDialog by remember { mutableStateOf(false) }
     var showConfirmDeleteFeedDialog by remember { mutableStateOf(false) }
+    var showTeachDialog by remember { mutableStateOf(false) }
 
     val primaryArticle = cluster.primaryArticle
     val isStacked = cluster.isStacked
@@ -103,7 +107,11 @@ fun ArticleCard(
 
     val context = LocalContext.current
     var effectiveImageUrl by remember(primaryArticle.id, primaryArticle.imageUrl) { mutableStateOf(primaryArticle.imageUrl) }
-    val isPodcastEpisode = primaryArticle.isPodcast || primaryArticle.isVideoPodcast || primaryArticle.mediaType == "AUDIO" || primaryArticle.mediaType == "VIDEO" || primaryArticle.category.equals("PODCASTS", ignoreCase = true)
+    val hasAudioMedia = primaryArticle.mediaType.equals("AUDIO", ignoreCase = true) ||
+            (primaryArticle.mediaUrl?.let { m -> m.contains(".mp3") || m.contains(".m4a") || m.contains(".ogg") || m.contains(".wav") || m.contains(".aac") || m.contains(".flac") } == true) ||
+            primaryArticle.link.endsWith(".mp3") || primaryArticle.link.endsWith(".m4a")
+    val isPodcastFolder = primaryArticle.category.equals("PODCASTS", ignoreCase = true)
+    val isPodcastEpisode = isPodcastFolder || hasAudioMedia || (primaryArticle.isVideoPodcast && isPodcastFolder)
 
     LaunchedEffect(primaryArticle.id, primaryArticle.imageUrl, primaryArticle.feedUrl) {
         if (effectiveImageUrl.isNullOrBlank()) {
@@ -414,10 +422,10 @@ fun ArticleCard(
                             }
                         }
 
-                        if (primaryArticle.isPodcast || primaryArticle.isVideoPodcast || primaryArticle.mediaType == "AUDIO" || primaryArticle.mediaType == "VIDEO") {
+                        if (isPodcastEpisode) {
                             Spacer(modifier = Modifier.width(6.dp))
-                            val cardMediaUrl = (primaryArticle.mediaUrl ?: primaryArticle.link).lowercase()
-                            val isAudioMedia = primaryArticle.mediaType == "AUDIO" || cardMediaUrl.contains(".mp3") || cardMediaUrl.contains(".m4a") || cardMediaUrl.contains(".ogg") || cardMediaUrl.contains(".wav")
+                            val cardMediaUrl = (primaryArticle.mediaUrl ?: if (hasAudioMedia) primaryArticle.link else "").lowercase()
+                            val isAudioMedia = hasAudioMedia || primaryArticle.mediaType == "AUDIO" || cardMediaUrl.contains(".mp3") || cardMediaUrl.contains(".m4a") || cardMediaUrl.contains(".ogg") || cardMediaUrl.contains(".wav")
                             val isVid = !isAudioMedia && (primaryArticle.isVideoPodcast || primaryArticle.mediaType == "VIDEO" || cardMediaUrl.contains(".mp4") || cardMediaUrl.contains(".m4v"))
                             Box(
                                 modifier = Modifier
@@ -615,19 +623,50 @@ fun ArticleCard(
                             } else {
                                 primaryArticle.category.uppercase()
                             }
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(2.dp))
-                                    .background(NothingSurfaceVariant)
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            ) {
-                                Text(
-                                    text = displayTag,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = NothingTextSecondary,
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .testTag("article_category_badge_${primaryArticle.id}")
+                                        .clip(RoundedCornerShape(2.dp))
+                                        .background(NothingSurfaceVariant)
+                                        .clickable { showTeachDialog = true }
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = displayTag,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = NothingTextSecondary,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text(
+                                            text = "✎",
+                                            fontSize = 8.sp,
+                                            color = NothingTextMuted
+                                        )
+                                    }
+                                }
+                                if (primaryArticle.isNpuCategorized) {
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(2.dp))
+                                            .background(NothingSurface)
+                                            .border(1.dp, NothingRed.copy(alpha = 0.6f), RoundedCornerShape(2.dp))
+                                            .clickable { showTeachDialog = true }
+                                            .padding(horizontal = 4.dp, vertical = 1.dp)
+                                    ) {
+                                        Text(
+                                            text = "⚡ NPU",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = NothingRed,
+                                            fontSize = 8.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -659,9 +698,9 @@ fun ArticleCard(
                         }
 
                         // Like Story Toggle Button
-                        if (primaryArticle.isPodcast || primaryArticle.isVideoPodcast || primaryArticle.mediaType == "AUDIO" || primaryArticle.mediaType == "VIDEO") {
-                            val cardMediaUrl = (primaryArticle.mediaUrl ?: primaryArticle.link).lowercase()
-                            val isAudioMedia = primaryArticle.mediaType == "AUDIO" || cardMediaUrl.contains(".mp3") || cardMediaUrl.contains(".m4a") || cardMediaUrl.contains(".ogg") || cardMediaUrl.contains(".wav")
+                        if (isPodcastEpisode) {
+                            val cardMediaUrl = (primaryArticle.mediaUrl ?: if (hasAudioMedia) primaryArticle.link else "").lowercase()
+                            val isAudioMedia = hasAudioMedia || primaryArticle.mediaType == "AUDIO" || cardMediaUrl.contains(".mp3") || cardMediaUrl.contains(".m4a") || cardMediaUrl.contains(".ogg") || cardMediaUrl.contains(".wav")
                             val isVid = !isAudioMedia && (primaryArticle.isVideoPodcast || primaryArticle.mediaType == "VIDEO" || cardMediaUrl.contains(".mp4") || cardMediaUrl.contains(".m4v"))
                             Box(
                                 modifier = Modifier
@@ -678,6 +717,36 @@ fun ArticleCard(
                                     color = NothingWhite,
                                     fontWeight = FontWeight.Bold
                                 )
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                        }
+
+                        if (onFlagNotPodcast != null) {
+                            Box(
+                                modifier = Modifier
+                                    .testTag("flag_not_podcast_button_${primaryArticle.id}")
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(NothingSurface)
+                                    .border(1.dp, NothingBorder, RoundedCornerShape(4.dp))
+                                    .clickable { onFlagNotPodcast(primaryArticle) }
+                                    .padding(horizontal = 7.dp, vertical = 4.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.Flag,
+                                        contentDescription = "Flag not a podcast",
+                                        tint = NothingRed,
+                                        modifier = Modifier.size(11.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text(
+                                        text = "NOT PODCAST",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 9.sp,
+                                        color = NothingTextSecondary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             }
                             Spacer(modifier = Modifier.width(4.dp))
                         }
@@ -925,7 +994,11 @@ fun ArticleCard(
         PodcastMediaDialog(
             article = primaryArticle,
             onDismiss = { showPodcastMediaDialog = false },
-            onOpenInBrowser = { url -> onArticleClick(primaryArticle.copy(link = url)) }
+            onOpenInBrowser = { url -> onArticleClick(primaryArticle.copy(link = url)) },
+            onFlagNotPodcast = { art ->
+                showPodcastMediaDialog = false
+                onFlagNotPodcast?.invoke(art)
+            }
         )
     }
 
@@ -976,6 +1049,20 @@ fun ArticleCard(
             },
             containerColor = NothingDarkGray,
             shape = RoundedCornerShape(8.dp)
+        )
+    }
+
+    if (showTeachDialog) {
+        TeachCategoryDialog(
+            itemTitle = primaryArticle.title,
+            currentCategory = primaryArticle.category,
+            currentSubcategory = primaryArticle.subcategory,
+            sourceFeedName = primaryArticle.feedTitle,
+            isFeedLevel = false,
+            onDismiss = { showTeachDialog = false },
+            onSaveAndTrain = { newCat, newSubcat, updateFeed ->
+                onTeachCategory?.invoke(primaryArticle, newCat, newSubcat, updateFeed)
+            }
         )
     }
 }

@@ -2,6 +2,7 @@ package com.example.ui.viewmodel
 
 import android.app.Application
 import android.content.Context
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.AppDatabase
@@ -44,6 +45,7 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
     val onlyRecommendations = MutableStateFlow(false)
     val onlyReadHistory = MutableStateFlow(false)
     val searchQuery = MutableStateFlow("")
+    val podcastSearchQuery = MutableStateFlow("")
     val fontSizeMultiplier = MutableStateFlow(1.0f) // 0.8f, 1.0f, 1.2f, 1.4f
 
     // Preferred Games for GAMING Category
@@ -172,6 +174,9 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
     private val _syncState = MutableStateFlow<SyncState>(SyncState.Idle)
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
 
+    private val _podcastSyncState = MutableStateFlow<SyncState>(SyncState.Idle)
+    val podcastSyncState: StateFlow<SyncState> = _podcastSyncState.asStateFlow()
+
     private val _isOnline = MutableStateFlow(repository.isDeviceOnline())
     val isOnline: StateFlow<Boolean> = _isOnline.asStateFlow()
 
@@ -197,7 +202,7 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
         initialValue = DefaultFeedCatalog.categories
     )
 
-    val availableSubcategories: StateFlow<List<String>> = combine(selectedCategory, repository.rawArticles) { category, rawArticles ->
+    val availableSubcategories: StateFlow<List<String>> = combine(selectedCategory, repository.newsArticles) { category, rawArticles ->
         val definedSubcats = com.example.data.model.SubcategoryAnalyzer.getAllSubcategoriesForCategory(category)
         val articlesInCategory = if (category == "ALL") rawArticles else rawArticles.filter { it.category.equals(category, ignoreCase = true) }
         val activeInArticles = articlesInCategory.map { art ->
@@ -304,21 +309,11 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
     // Dedicated Podcast stream completely independent of News stream category
     @OptIn(ExperimentalCoroutinesApi::class)
     val podcastClusters: StateFlow<List<StoryCluster>> = combine(
-        repository.getClusteredFeedStream(
-            categoryFilter = "PODCASTS",
-            timeRangeFilter = com.example.data.model.TimeRangeFilter.ALL_TIME,
-            hideDeals = false,
-            onlyPreferredFeeds = false,
-            onlyBookmarks = false,
-            onlyOffline = false,
-            onlyRecommendations = false,
-            onlyReadHistory = false,
-            randomSeed = 0L
-        ),
+        repository.getPodcastStream(),
         podcastTypeFilter,
         selectedPodcastCategory,
         selectedPodcastShowUrl,
-        searchQuery
+        podcastSearchQuery
     ) { clusters, podcastFilter, podcastCat, selectedUrl, query ->
         val appCtx = getApplication<Application>()
         var result = clusters
@@ -429,8 +424,34 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
         checkOnlineStatus()
         viewModelScope.launch {
             _syncState.value = SyncState.Syncing
+            val result = repository.refreshNewsFeedsOnly()
+            _syncState.value = result
+            if (result is SyncState.Success) {
+                updateLastSyncTimestampState()
+            }
+        }
+    }
+
+    fun refreshPodcasts() {
+        checkOnlineStatus()
+        viewModelScope.launch {
+            _podcastSyncState.value = SyncState.Syncing
+            val result = repository.refreshPodcastFeedsOnly()
+            _podcastSyncState.value = result
+            if (result is SyncState.Success) {
+                updateLastSyncTimestampState()
+            }
+        }
+    }
+
+    fun refreshAllFeeds() {
+        checkOnlineStatus()
+        viewModelScope.launch {
+            _syncState.value = SyncState.Syncing
+            _podcastSyncState.value = SyncState.Syncing
             val result = repository.refreshFeeds()
             _syncState.value = result
+            _podcastSyncState.value = result
             if (result is SyncState.Success) {
                 updateLastSyncTimestampState()
             }
@@ -638,12 +659,51 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
         _selectedClusterForSources.value = null
     }
 
+    private val _isDownloadingFullArticle = MutableStateFlow(false)
+    val isDownloadingFullArticle: StateFlow<Boolean> = _isDownloadingFullArticle.asStateFlow()
+
     fun openArticleReader(article: ArticleEntity) {
         val isPodcast = article.isPodcast || article.isVideoPodcast || article.mediaType == "AUDIO" || article.mediaType == "VIDEO" || article.category.equals("PODCASTS", ignoreCase = true)
         if (!isPodcast) {
             markArticleRead(article.id)
         }
         _selectedArticleForReading.value = article
+
+        // If article content is clearly not full, automatically download webpage in the background
+        if (!isPodcast && isOnline.value && com.example.util.WebpageArticleExtractor.isArticleIncomplete(article)) {
+            loadFullArticleWebpage(article)
+        }
+    }
+
+    fun loadFullArticleWebpage(article: ArticleEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _isDownloadingFullArticle.value = true
+            try {
+                val updated = repository.fetchAndSaveFullArticleWebpage(article.id)
+                if (updated != null) {
+                    _selectedArticleForReading.value = updated
+                }
+            } catch (e: Exception) {
+                Log.e("RssViewModel", "Error downloading full article webpage: ${e.localizedMessage}")
+            } finally {
+                _isDownloadingFullArticle.value = false
+            }
+        }
+    }
+
+    fun flagArticleNotPodcast(article: ArticleEntity, reclassifyEntireFeed: Boolean = false) {
+        viewModelScope.launch {
+            repository.flagArticleNotPodcast(article, reclassifyEntireFeed)
+            val current = _selectedArticleForReading.value
+            if (current != null && current.id == article.id) {
+                _selectedArticleForReading.value = current.copy(
+                    isPodcast = false,
+                    isVideoPodcast = false,
+                    mediaType = null,
+                    mediaUrl = null
+                )
+            }
+        }
     }
 
     fun openArticleFromIntent(articleId: String?, articleUrl: String?) {
@@ -687,6 +747,62 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
     fun updateFeedCategory(feedUrl: String, newCategory: String) {
         viewModelScope.launch {
             repository.updateFeedCategory(feedUrl, newCategory)
+        }
+    }
+
+    val npuHardwareInfo = com.example.data.model.NpuTensorCategorizer.hardwareInfo
+
+    fun getNpuModelLearningStats(): com.example.data.model.NpuTensorCategorizer.ModelLearningStats {
+        return repository.getNpuModelLearningStats()
+    }
+
+    fun resetNpuLearnedWeights() {
+        repository.resetNpuLearnedWeights()
+    }
+
+    fun teachAndLabelArticle(
+        articleId: String,
+        newCategory: String,
+        newSubcategory: String = "",
+        updateSourceFeed: Boolean = false,
+        onResult: (Boolean) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            val success = repository.teachAndLabelArticle(articleId, newCategory, newSubcategory, updateSourceFeed)
+            if (success) {
+                refreshNews()
+            }
+            onResult(success)
+        }
+    }
+
+    fun teachAndLabelFeed(
+        feedUrl: String,
+        newCategory: String,
+        onResult: (Boolean) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            val success = repository.teachAndLabelFeed(feedUrl, newCategory)
+            if (success) {
+                refreshNews()
+            }
+            onResult(success)
+        }
+    }
+
+    fun runNpuCategorizationOnAllFeedsAndStories(onResult: (com.example.data.model.NpuTensorCategorizer.BatchClassificationSummary) -> Unit) {
+        viewModelScope.launch {
+            val summary = repository.runNpuReclassificationOnAllFeedsAndStories()
+            refreshNews()
+            onResult(summary)
+        }
+    }
+
+    fun runNpuCategorizationOnAllStories(onResult: (Int) -> Unit) {
+        viewModelScope.launch {
+            val count = repository.runNpuReclassificationOnAllArticles()
+            refreshNews()
+            onResult(count)
         }
     }
 
@@ -741,7 +857,11 @@ class RssViewModel(application: Application) : AndroidViewModel(application) {
             val success = repository.addCustomFeed(url, title, category)
             if (success) {
                 _syncState.value = SyncState.Success(1)
-                refreshNews()
+                if (category.equals("PODCASTS", ignoreCase = true)) {
+                    refreshPodcasts()
+                } else {
+                    refreshNews()
+                }
             } else {
                 _syncState.value = SyncState.Error("Invalid or unreachable RSS Feed URL")
             }

@@ -34,5 +34,7 @@ data class ArticleEntity(
     val isPodcast: Boolean = false, // Flag indicating podcast audio/video episode
     val isVideoPodcast: Boolean = false, // Flag indicating video podcast
     val duration: String? = null, // Episode duration (e.g., "45:12")
-    val isDecoupled: Boolean = false // User manually decoupled/unstacked this story from cluster
+    val isDecoupled: Boolean = false, // User manually decoupled/unstacked this story from cluster
+    val isNpuCategorized: Boolean = false, // Categorized or re-classified on-the-fly via TPU/NPU
+    val npuConfidence: Float = 0f // NPU categorization confidence score
 )
